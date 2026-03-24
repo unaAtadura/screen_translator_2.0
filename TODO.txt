@@ -1,0 +1,37 @@
+目的：翻译游戏对白
+选择一个区域来识别文本，选择另一个区域来显示译文
+两个区域保持激活，方便随时翻译
+screen_translaor_1.0.py使用了本地ollama，运行速度不理想，
+screen_translaor_2.0.py尝试使用API
+参考方法默认来自test/screen_translaor_1.0.py
+文本格式utf8
+提交git日志使用中文
+
+架构
+UI
+主界面
+  选择译文区域按钮 参考select_translate_area() 
+  选择识别区域按钮 参考select_area() 
+  识别区域按钮一开始不可点击，必须先创建译文区域再创建识别区域
+  选择区域时按ESC可退出
+  自适应窗口大小
+译文区域 create_translate_window()
+  在译文位置显示交互信息 recognize_area() create_translate_window()
+  删除原本在左下角的三个设置选项和右下角的两个按钮，中止功能按钮移动到识别区域
+  区域可拖拽移动
+识别区域 create_border_window() 
+  关闭按钮 中止按钮 重新识别按钮 。关闭按钮可同时关闭译文区域和识别区域，都关闭后，主界面识别区域按钮恢复不可点击状态。
+  自适应按钮位置
+  区域可拖拽移动
+
+图片压缩 compress_image()
+  识别到的截图 增加文字对比度，转换为灰度图，压缩成jpg格式
+
+线程
+  用线程处理AI交互，防止阻塞
+  OCR 参考test/glm_ocr_example.py api_key读取本地key.txt
+  翻译 参考test/glm_translate_example.py
+
+debug
+  控制台中显示debug信息
+  本地创建debug.log记录信息
