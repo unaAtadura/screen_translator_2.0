@@ -60,6 +60,16 @@ class ScreenTranslatorApp:
         self.select_recognize_area_btn = tk.Button(root, text="选择识别区域", command=self.select_area, font=('Arial', 12), state=tk.DISABLED)
         self.select_recognize_area_btn.pack(pady=5)
         
+        # 中止按钮
+        self.abort_btn = tk.Button(root, text="中止", command=self.abort_ai_interaction, 
+                                   bg='orange', fg='black', font=('Arial', 12), state=tk.DISABLED)
+        self.abort_btn.pack(pady=5)
+        
+        # 关闭按钮
+        self.close_btn = tk.Button(root, text="关闭", command=self.close_border, 
+                                   bg='red', fg='white', font=('Arial', 12), state=tk.DISABLED)
+        self.close_btn.pack(pady=5)
+        
         # 状态标签
         self.status_label = tk.Label(root, text="就绪", font=("Arial", 10))
         self.status_label.pack(pady=5)
@@ -221,19 +231,50 @@ class ScreenTranslatorApp:
         main_frame = tk.Frame(self.translate_window, bg='black')
         main_frame.pack(fill=tk.BOTH, expand=True)
         
+        # 1. 创建画布（用来承载滚动）
+        canvas = tk.Canvas(main_frame, bg='black')
+        canvas.pack(side="left", fill="both", expand=True)
+        
+        # 2. 绑定滚动（修复滚动区域更新问题）
+        def update_scrollregion(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.bind('<Configure>', update_scrollregion)
+        
+        # 3. 新增：全窗口滚轮滚动逻辑（兼容Windows/Mac/Linux）
+        def on_mouse_wheel(event):
+            # 简化滚动逻辑，确保滚动方向正确
+            # 向下滚动（鼠标轮向下）→ 内容向下滚动，查看更多内容
+            # 向上滚动（鼠标轮向上）→ 内容向上滚动，回到顶部
+            if event.num == 4 or (event.delta > 0):  # 向上滚动
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or (event.delta < 0):  # 向下滚动
+                canvas.yview_scroll(1, "units")
+        
+        # 绑定滚轮事件到整个翻译窗口
+        self.translate_window.bind("<MouseWheel>", on_mouse_wheel)  # Windows/Mac 新版
+        self.translate_window.bind("<Button-4>", on_mouse_wheel)    # Linux 向上
+        self.translate_window.bind("<Button-5>", on_mouse_wheel)    # Linux 向下
+        
+        # 4. 在画布内放一个 frame
+        inner_frame = tk.Frame(canvas, bg='black')
+        canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+        
         # 创建标签用于显示翻译内容
-        self.translate_text_widget = tk.Label(main_frame, 
+        self.translate_text_widget = tk.Label(inner_frame, 
                                            font=("Arial", 12), 
                                            fg='white', 
                                            bg='black',
-                                           wraplength=width-20,
+                                           wraplength=width-40,  # 减去边距
                                            justify=tk.LEFT,
                                            anchor=tk.NW)
         self.translate_text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 创建状态标签
-        self.translate_status_label = tk.Label(main_frame, text="就绪", font=("Arial", 8), fg='white', bg='black')
+        self.translate_status_label = tk.Label(inner_frame, text="就绪", font=("Arial", 8), fg='white', bg='black')
         self.translate_status_label.pack(side=tk.BOTTOM, padx=10, pady=5)
+        
+        # 初始化时强制更新一次滚动区域（避免初始无滚动）
+        self.translate_window.after(100, update_scrollregion)
     
     def select_area(self):
         """选择识别区域"""
@@ -342,14 +383,34 @@ class ScreenTranslatorApp:
         canvas.create_rectangle(0, 0, width, height, outline='red', width=2)
         
         # 创建控制按钮窗口，放在选择框右上角外侧
+        button_width = 100
+        button_height = 40
+        margin = 50  # 边界边距
+        
+        # 使用识别区域的实际像素坐标，不依赖屏幕尺寸检测
+        # 默认放在识别区域上方偏右
+        button_x = x + width - button_width
+        button_y = y - button_height - 5
+        
+        # 获取屏幕高度用于边界检查
+        screen_height = self.root.winfo_screenheight()
+        
+        # 如果上方空间不够，尝试放在下方
+        if button_y < margin:
+            button_y = y + height + 5
+            # 如果下方空间也不够，就放在识别区域内顶部
+            if button_y + button_height > screen_height - margin:
+                button_y = y + margin
+                button_x = x + width - button_width - margin
+        
         self.button_window = tk.Toplevel(self.root)
-        self.button_window.geometry(f"250x40+{x + width - 250}+{y - 45}")  # 放在选择框上方
+        self.button_window.geometry(f"{button_width}x{button_height}+{button_x}+{button_y}")
         self.button_window.overrideredirect(True)  # 无标题栏
         self.button_window.attributes('-topmost', True)
         self.button_window.attributes('-alpha', 1.0)  # 完全不透明，确保按钮清晰可见
         
         # 创建按钮框架
-        button_frame = tk.Frame(self.button_window, bg='black', bd=2, relief=tk.RAISED)
+        button_frame = tk.Frame(self.button_window, bg='yellow', bd=3, relief=tk.RAISED)
         button_frame.pack(fill=tk.BOTH, expand=True)
         
         # 重新识别按钮
@@ -357,15 +418,9 @@ class ScreenTranslatorApp:
                                bg='lime', fg='black', font=("Arial", 10, "bold"), padx=5, pady=4)
         recognize_btn.pack(side=tk.LEFT, padx=3, pady=3, fill=tk.BOTH, expand=True)
         
-        # 中止按钮
-        abort_btn = tk.Button(button_frame, text="中止", command=self.abort_ai_interaction, 
-                           bg='orange', fg='black', font=("Arial", 10, "bold"), padx=5, pady=4)
-        abort_btn.pack(side=tk.LEFT, padx=3, pady=3, fill=tk.BOTH, expand=True)
-        
-        # 关闭按钮
-        close_btn = tk.Button(button_frame, text="关闭", command=self.close_border, 
-                           bg='red', fg='white', font=("Arial", 10, "bold"), padx=5, pady=4)
-        close_btn.pack(side=tk.RIGHT, padx=3, pady=3, fill=tk.BOTH, expand=True)
+        # 启用主界面的中止和关闭按钮
+        self.abort_btn.config(state=tk.NORMAL)
+        self.close_btn.config(state=tk.NORMAL)
     
     def recognize_area(self):
         """识别选定区域的文字"""
@@ -595,9 +650,9 @@ class ScreenTranslatorApp:
         if not self.ai_interaction_active:
             raise Exception("AI交互已中止")
         
-        # 发送请求，带重试机制
-        max_retries = 3
-        retry_delay = 2
+        # 发送请求，带智能重试机制
+        max_retries = 5  # 增加重试次数
+        base_delay = 3  # 基础延迟时间（秒）
         
         for attempt in range(max_retries):
             try:
@@ -643,16 +698,27 @@ class ScreenTranslatorApp:
                 if not self.ai_interaction_active:
                     raise Exception("AI交互已中止")
                 
+                # 特殊处理429错误
+                if "429" in error_str or "Too Many Requests" in error_str:
+                    if attempt < max_retries - 1:
+                        # 计算退避时间（指数退避 + 随机抖动）
+                        import time
+                        import random
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        logger.info(f"遇到429错误，等待 {delay:.1f} 秒后重试...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise Exception("请求过于频繁，请等待几分钟后再试")
+                
+                # 其他错误的处理
                 if attempt < max_retries - 1:
                     import time
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # 指数退避
+                    time.sleep(base_delay)
                     continue
                 else:
                     if "401" in error_str or "Unauthorized" in error_str:
                         raise Exception("API密钥无效或已过期，请检查key.txt文件中的API密钥")
-                    elif "429" in error_str or "Too Many Requests" in error_str:
-                        raise Exception("请求过于频繁，请稍后再试")
                     elif "413" in error_str or "Payload Too Large" in error_str:
                         raise Exception("请求体过大，请选择更小的识别区域")
                     else:
@@ -670,9 +736,9 @@ class ScreenTranslatorApp:
         if zhipu_client is None:
             raise Exception("智普AI客户端未初始化，请检查key.txt文件中的API密钥")
         
-        # 发送请求，带重试机制
-        max_retries = 3
-        retry_delay = 2
+        # 发送请求，带智能重试机制
+        max_retries = 5  # 增加重试次数
+        base_delay = 3  # 基础延迟时间（秒）
         
         for attempt in range(max_retries):
             try:
@@ -707,16 +773,27 @@ class ScreenTranslatorApp:
                 if not self.translating:
                     raise Exception("翻译已中止")
                 
+                # 特殊处理429错误
+                if "429" in error_str or "Too Many Requests" in error_str:
+                    if attempt < max_retries - 1:
+                        # 计算退避时间（指数退避 + 随机抖动）
+                        import time
+                        import random
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        logger.info(f"遇到429错误，等待 {delay:.1f} 秒后重试...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise Exception("请求过于频繁，请等待几分钟后再试")
+                
+                # 其他错误的处理
                 if attempt < max_retries - 1:
                     import time
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # 指数退避
+                    time.sleep(base_delay)
                     continue
                 else:
                     if "401" in error_str or "Unauthorized" in error_str:
                         raise Exception("API密钥无效或已过期，请检查key.txt文件中的API密钥")
-                    elif "429" in error_str or "Too Many Requests" in error_str:
-                        raise Exception("请求过于频繁，请稍后再试")
                     else:
                         raise Exception(f"智普AI请求失败: {error_str}")
     
@@ -776,11 +853,26 @@ class ScreenTranslatorApp:
         # 更新窗口位置
         self.border_window.geometry(f"{width}x{height}+{x}+{y}")
         
-        # 更新按钮窗口位置
+        # 更新按钮窗口位置，保持在识别区域上方或下方
         if self.button_window:
-            button_x = x + width - 250
-            button_y = y - 45
-            self.button_window.geometry(f"250x40+{button_x}+{button_y}")
+            button_width = 100
+            button_height = 40
+            margin = 50
+            
+            button_x = x + width - button_width
+            button_y = y - button_height - 5
+            
+            screen_height = self.root.winfo_screenheight()
+            
+            # 如果上方空间不够，尝试放在下方
+            if button_y < margin:
+                button_y = y + height + 5
+                # 如果下方空间也不够，就放在识别区域内顶部
+                if button_y + button_height > screen_height - margin:
+                    button_y = y + margin
+                    button_x = x + width - button_width - margin
+            
+            self.button_window.geometry(f"{button_width}x{button_height}+{button_x}+{button_y}")
         
         # 更新当前区域
         if self.current_region:
@@ -825,15 +917,34 @@ class ScreenTranslatorApp:
         
         # 更新按钮窗口位置
         if self.button_window:
-            button_x = new_x + new_width - 250
-            button_y = new_y - 45
-            self.button_window.geometry(f"250x40+{button_x}+{button_y}")
+            button_width = 100
+            button_height = 40
+            margin = 50
+            
+            button_x = new_x + new_width - button_width
+            button_y = new_y - button_height - 5
+            
+            screen_height = self.root.winfo_screenheight()
+            
+            # 如果上方空间不够，尝试放在下方
+            if button_y < margin:
+                button_y = new_y + new_height + 5
+                # 如果下方空间也不够，就放在识别区域内顶部
+                if button_y + button_height > screen_height - margin:
+                    button_y = new_y + margin
+                    button_x = new_x + new_width - button_width - margin
+            
+            self.button_window.geometry(f"{button_width}x{button_height}+{button_x}+{button_y}")
         
         # 更新当前区域
         self.current_region = (new_x, new_y, new_width, new_height)
     
     def close_border(self):
-        """关闭边框窗口和按钮窗口"""
+        """关闭边框窗口和按钮窗口，同时关闭译文窗口"""
+        # 先中止AI交互
+        self.abort_ai_interaction()
+        
+        # 关闭识别窗口和按钮窗口
         if self.border_window:
             self.border_window.destroy()
             self.border_window = None
@@ -841,7 +952,21 @@ class ScreenTranslatorApp:
             self.button_window.destroy()
             self.button_window = None
         self.current_region = None
-        self.status_label.config(text="识别窗口已关闭")
+        
+        # 关闭译文窗口
+        if hasattr(self, 'translate_window') and self.translate_window:
+            self.translate_window.destroy()
+            self.translate_window = None
+        self.current_translate_region = None
+        
+        # 禁用识别区域按钮
+        self.select_recognize_area_btn.config(state=tk.DISABLED)
+        
+        # 禁用主界面的中止和关闭按钮
+        self.abort_btn.config(state=tk.DISABLED)
+        self.close_btn.config(state=tk.DISABLED)
+        
+        self.status_label.config(text="所有窗口已关闭")
     
     def translate_window_mouse_down(self, event):
         """翻译窗口鼠标按下事件"""
@@ -965,7 +1090,19 @@ class ScreenTranslatorApp:
         
         # 更新文本框的wraplength
         if hasattr(self, 'translate_text_widget'):
-            self.translate_text_widget.config(wraplength=new_width-20)
+            self.translate_text_widget.config(wraplength=new_width-40)  # 减去边距
+            # 强制更新滚动区域
+            if hasattr(self, 'translate_window') and self.translate_window:
+                self.translate_window.update_idletasks()
+                # 触发滚动区域更新
+                if window == self.translate_window:
+                    # 找到canvas并更新滚动区域
+                    for child in window.winfo_children():
+                        if isinstance(child, tk.Frame):
+                            for grandchild in child.winfo_children():
+                                if isinstance(grandchild, tk.Canvas):
+                                    grandchild.configure(scrollregion=grandchild.bbox("all"))
+                                    break
     
     def abort_ai_interaction(self):
         """中止当前的AI交互"""
