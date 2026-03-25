@@ -262,7 +262,7 @@ class ScreenTranslatorApp(QMainWindow):
         self.translate_text_widget = QLabel()
         self.translate_text_widget.setWordWrap(True)
         self.translate_text_widget.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.translate_text_widget.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 20px; color: white; padding: 10px;")
+        self.translate_text_widget.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 16px; color: white; padding: 10px;")
         content_layout.addWidget(self.translate_text_widget)
         
         # 创建状态标签
