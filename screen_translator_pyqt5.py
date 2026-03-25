@@ -233,6 +233,8 @@ class ScreenTranslatorApp(QMainWindow):
         self.translate_window = QWidget()
         self.translate_window.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.translate_window.setGeometry(x, y, width, height)
+        # 设置窗口背景为半透明黑色
+        self.translate_window.setStyleSheet("background-color: rgba(0, 0, 0, 76);")
         
         # 绑定鼠标事件
         self.translate_window.mousePressEvent = self.translate_window_mouse_down
@@ -244,10 +246,10 @@ class ScreenTranslatorApp(QMainWindow):
         main_layout = QVBoxLayout(self.translate_window)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 创建滚动区域 - 使用半透明背景
+        # 创建滚动区域 - 使用透明背景
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("background-color: rgba(0, 0, 0, 76); border: none;")  # 0.3透明度
+        scroll_area.setStyleSheet("background-color: transparent; border: none;")
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
@@ -260,7 +262,7 @@ class ScreenTranslatorApp(QMainWindow):
         self.translate_text_widget = QLabel()
         self.translate_text_widget.setWordWrap(True)
         self.translate_text_widget.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.translate_text_widget.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px; color: white; padding: 10px;")
+        self.translate_text_widget.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 20px; color: white; padding: 10px;")
         content_layout.addWidget(self.translate_text_widget)
         
         # 创建状态标签
