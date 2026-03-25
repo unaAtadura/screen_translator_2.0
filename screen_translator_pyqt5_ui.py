@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 import sys
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QLabel, QPushButton, 
-                             QVBoxLayout, QHBoxLayout, QFrame, QScrollArea)
-from PyQt5.QtCore import Qt, QPoint, QEvent
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QLabel, QPushButton, 
+                             QVBoxLayout, QHBoxLayout, QFrame, QScrollArea
+from PyQt5.QtCore import Qt, QPoint, QEvent, QTimer
 from PyQt5.QtGui import QCursor, QPainter, QPen, QColor
+from PyQt5.uic import loadUi
 import pyautogui
 from PIL import Image, ImageEnhance, ImageOps
 import base64
@@ -69,54 +70,8 @@ class SelectionWindow(QWidget):
 class ScreenTranslatorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("屏幕翻译工具 (v2.0 - PyQt5)")
-        self.setMinimumSize(200, 300)
-        self.setWindowFlags(Qt.WindowStaysOnTopHint)
-        
-        # 创建中心部件
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # 创建垂直布局
-        layout = QVBoxLayout(central_widget)
-        
-        # 标题标签
-        self.title_label = QLabel("屏幕翻译工具 (v2.0)")
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px; font-weight: bold;")
-        layout.addWidget(self.title_label)
-        
-        # 选择区域按钮
-        self.select_translate_area_btn = QPushButton("选择译文区域")
-        self.select_translate_area_btn.clicked.connect(self.select_translate_area)
-        self.select_translate_area_btn.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px;")
-        layout.addWidget(self.select_translate_area_btn)
-        
-        self.select_recognize_area_btn = QPushButton("选择识别区域")
-        self.select_recognize_area_btn.clicked.connect(self.select_area)
-        self.select_recognize_area_btn.setEnabled(False)
-        self.select_recognize_area_btn.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px;")
-        layout.addWidget(self.select_recognize_area_btn)
-        
-        # 中止按钮
-        self.abort_btn = QPushButton("中止")
-        self.abort_btn.clicked.connect(self.abort_ai_interaction)
-        self.abort_btn.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px; background-color: orange; color: black;")
-        self.abort_btn.setEnabled(False)
-        layout.addWidget(self.abort_btn)
-        
-        # 关闭按钮
-        self.close_btn = QPushButton("关闭")
-        self.close_btn.clicked.connect(self.close_border)
-        self.close_btn.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px; background-color: red; color: white;")
-        self.close_btn.setEnabled(False)
-        layout.addWidget(self.close_btn)
-        
-        # 状态标签
-        self.status_label = QLabel("就绪")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setStyleSheet("font-family: 'Source Han Sans SC'; font-size: 14px;")
-        layout.addWidget(self.status_label)
+        # 加载UI文件
+        loadUi('ui/main_window.ui', self)
         
         # 区域选择相关变量
         self.start_x = 0
@@ -148,13 +103,19 @@ class ScreenTranslatorApp(QMainWindow):
         self.resize_start = QPoint()
         self.resize_edge = None
         
+        # 连接信号
+        self.selectTranslateAreaBtn.clicked.connect(self.select_translate_area)
+        self.selectRecognizeAreaBtn.clicked.connect(self.select_area)
+        self.abortBtn.clicked.connect(self.abort_ai_interaction)
+        self.closeBtn.clicked.connect(self.close_border)
+        
         logger.debug("程序启动，初始化界面")
     
     def select_translate_area(self):
         """选择翻译区域"""
         try:
             logger.debug("开始选择译文区域")
-            self.status_label.setText("请选择译文区域...")
+            self.statusLabel.setText("请选择译文区域...")
             
             # 创建全屏半透明窗口用于选择区域
             self.translate_select_window = SelectionWindow()
@@ -172,7 +133,7 @@ class ScreenTranslatorApp(QMainWindow):
             self.translate_select_window.showFullScreen()
             
         except Exception as e:
-            self.status_label.setText(f"错误: {str(e)}")
+            self.statusLabel.setText(f"错误: {str(e)}")
             logger.error(f"选择译文区域失败: {str(e)}")
     
     def on_translate_mouse_down(self, event):
@@ -209,7 +170,7 @@ class ScreenTranslatorApp(QMainWindow):
         
         # 如果选择区域太小，提示用户
         if width < 100 or height < 50:
-            self.status_label.setText("选择区域太小，请重新选择")
+            self.statusLabel.setText("选择区域太小，请重新选择")
             return
         
         # 保存当前选择的翻译区域
@@ -220,8 +181,8 @@ class ScreenTranslatorApp(QMainWindow):
         self.create_translate_window(x1, y1, width, height)
         
         # 启用识别区域按钮
-        self.select_recognize_area_btn.setEnabled(True)
-        self.status_label.setText("译文区域创建完成")
+        self.selectRecognizeAreaBtn.setEnabled(True)
+        self.statusLabel.setText("译文区域创建完成")
     
     def create_translate_window(self, x, y, width, height):
         """创建翻译显示窗口"""
@@ -297,7 +258,7 @@ class ScreenTranslatorApp(QMainWindow):
         """选择识别区域"""
         try:
             logger.debug("开始选择识别区域")
-            self.status_label.setText("请选择识别区域...")
+            self.statusLabel.setText("请选择识别区域...")
             
             # 创建全屏半透明窗口用于选择区域
             self.select_window = SelectionWindow()
@@ -316,7 +277,7 @@ class ScreenTranslatorApp(QMainWindow):
             self.select_window.showFullScreen()
             
         except Exception as e:
-            self.status_label.setText(f"错误: {str(e)}")
+            self.statusLabel.setText(f"错误: {str(e)}")
             logger.error(f"选择识别区域失败: {str(e)}")
     
     def on_mouse_down(self, event):
@@ -353,7 +314,7 @@ class ScreenTranslatorApp(QMainWindow):
         
         # 如果选择区域太小，提示用户
         if width < 10 or height < 10:
-            self.status_label.setText("选择区域太小，请重新选择")
+            self.statusLabel.setText("选择区域太小，请重新选择")
             return
         
         # 保存当前选择的区域
@@ -421,8 +382,8 @@ class ScreenTranslatorApp(QMainWindow):
         button_layout.addWidget(recognize_btn)
         
         # 启用主界面的中止和关闭按钮
-        self.abort_btn.setEnabled(True)
-        self.close_btn.setEnabled(True)
+        self.abortBtn.setEnabled(True)
+        self.closeBtn.setEnabled(True)
         
         self.border_window.show()
         self.button_window.show()
@@ -430,7 +391,7 @@ class ScreenTranslatorApp(QMainWindow):
     def recognize_area(self):
         """识别选定区域的文字"""
         if not self.current_region:
-            self.status_label.setText("未选择区域")
+            self.statusLabel.setText("未选择区域")
             return
         
         # 启动线程处理AI交互
@@ -453,7 +414,7 @@ class ScreenTranslatorApp(QMainWindow):
                     screenshot.save(buffered, format="JPEG", quality=75)
                     image_size_kb = len(buffered.getvalue()) / 1024
                     
-                    self.status_label.setText("正在识别...")
+                    self.statusLabel.setText("正在识别...")
                     # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.setText("识别中...")
@@ -482,7 +443,7 @@ class ScreenTranslatorApp(QMainWindow):
                 
                 # 更新UI
                 def update_ui_recognized():
-                    self.status_label.setText("识别完成，正在翻译...")
+                    self.statusLabel.setText("识别完成，正在翻译...")
                     # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.setText("翻译中...")
@@ -502,14 +463,14 @@ class ScreenTranslatorApp(QMainWindow):
                 
                 # 更新UI
                 def update_ui_completed():
-                    self.status_label.setText("翻译完成")
+                    self.statusLabel.setText("翻译完成")
                 
                 QApplication.instance().postEvent(self, QEvent(QEvent.User))
                 update_ui_completed()
             except Exception as e:
                 # 更新UI
                 def update_ui_error(e):
-                    self.status_label.setText(f"错误: {str(e)}")
+                    self.statusLabel.setText(f"错误: {str(e)}")
                     # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.setText(f"识别失败: {str(e)}")
@@ -549,7 +510,7 @@ class ScreenTranslatorApp(QMainWindow):
                 
                 # 更新UI
                 def update_ui_translating():
-                    self.status_label.setText("正在翻译...")
+                    self.statusLabel.setText("正在翻译...")
                     # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.setText("翻译中...")
@@ -587,7 +548,7 @@ class ScreenTranslatorApp(QMainWindow):
             except Exception as e:
                 # 更新UI
                 def update_ui_error(e):
-                    self.status_label.setText(f"翻译错误: {str(e)}")
+                    self.statusLabel.setText(f"翻译错误: {str(e)}")
                     # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.setText(f"翻译失败: {str(e)}")
@@ -962,7 +923,7 @@ class ScreenTranslatorApp(QMainWindow):
                 # 更新文本框的wraplength
                 if hasattr(self, 'translate_text_widget'):
                     # 动态调整文本框的宽度限制
-                    self.translate_text_widget.setStyleSheet(f"font-family: 'Source Han Sans SC'; font-size: 14px; color: white; padding: 10px;")
+                    self.translate_text_widget.setStyleSheet(f"font-family: 'Source Han Sans SC'; font-size: 16px; color: white; padding: 10px;")
     
     def close_border(self):
         """关闭边框窗口和按钮窗口，同时关闭译文窗口"""
@@ -985,13 +946,13 @@ class ScreenTranslatorApp(QMainWindow):
         self.current_translate_region = None
         
         # 禁用识别区域按钮
-        self.select_recognize_area_btn.setEnabled(False)
+        self.selectRecognizeAreaBtn.setEnabled(False)
         
         # 禁用主界面的中止和关闭按钮
-        self.abort_btn.setEnabled(False)
-        self.close_btn.setEnabled(False)
+        self.abortBtn.setEnabled(False)
+        self.closeBtn.setEnabled(False)
         
-        self.status_label.setText("所有窗口已关闭")
+        self.statusLabel.setText("所有窗口已关闭")
     
     def translate_window_mouse_down(self, event):
         """翻译窗口鼠标按下事件"""
@@ -1084,7 +1045,7 @@ class ScreenTranslatorApp(QMainWindow):
             self.translating = False
         
         # 更新UI
-        self.status_label.setText("AI交互已中止")
+        self.statusLabel.setText("AI交互已中止")
         if hasattr(self, 'translate_status_label'):
             self.translate_status_label.setText("AI交互已中止")
         if hasattr(self, 'translate_text_widget'):
@@ -1098,7 +1059,7 @@ class ScreenTranslatorApp(QMainWindow):
         if hasattr(self, 'translate_select_window') and self.translate_select_window:
             self.translate_select_window.close()
             self.translate_select_window = None
-        self.status_label.setText("选择已取消")
+        self.statusLabel.setText("选择已取消")
 
 if __name__ == "__main__":
     # 启用高 DPI 支持
