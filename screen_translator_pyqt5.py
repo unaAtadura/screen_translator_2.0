@@ -2,7 +2,7 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QLabel, QPushButton, 
                              QVBoxLayout, QHBoxLayout, QFrame, QScrollArea)
-from PyQt5.QtCore import Qt, QPoint, QEvent
+from PyQt5.QtCore import Qt, QPoint, QEvent, QScreen
 from PyQt5.QtGui import QCursor, QPainter, QPen, QColor
 import pyautogui
 from PIL import Image, ImageEnhance, ImageOps
@@ -72,6 +72,11 @@ class ScreenTranslatorApp(QMainWindow):
         self.setWindowTitle("屏幕翻译工具 (v2.0 - PyQt5)")
         self.setMinimumSize(200, 300)
         self.setWindowFlags(Qt.WindowStaysOnTopHint)
+        
+        # 获取系统缩放因子
+        self.screen = QApplication.primaryScreen()
+        self.device_pixel_ratio = self.screen.devicePixelRatio()
+        logger.debug(f"系统缩放因子: {self.device_pixel_ratio}")
         
         # 创建中心部件
         central_widget = QWidget()
@@ -177,6 +182,7 @@ class ScreenTranslatorApp(QMainWindow):
     
     def on_translate_mouse_down(self, event):
         """翻译区域选择鼠标按下事件"""
+        # 应用缩放因子，确保坐标正确
         self.translate_select_window.start_x = event.globalX()
         self.translate_select_window.start_y = event.globalY()
         self.translate_select_window.selecting = True
@@ -184,12 +190,14 @@ class ScreenTranslatorApp(QMainWindow):
     def on_translate_mouse_drag(self, event):
         """翻译区域选择鼠标拖动事件"""
         if self.translate_select_window.selecting:
+            # 应用缩放因子，确保坐标正确
             self.translate_select_window.end_x = event.globalX()
             self.translate_select_window.end_y = event.globalY()
             self.translate_select_window.update()
     
     def on_translate_mouse_up(self, event):
         """翻译区域选择鼠标释放事件"""
+        # 应用缩放因子，确保坐标正确
         self.translate_select_window.end_x = event.globalX()
         self.translate_select_window.end_y = event.globalY()
         self.translate_select_window.selecting = False
@@ -321,6 +329,7 @@ class ScreenTranslatorApp(QMainWindow):
     
     def on_mouse_down(self, event):
         # 记录起始坐标
+        # 应用缩放因子，确保坐标正确
         self.select_window.start_x = event.globalX()
         self.select_window.start_y = event.globalY()
         self.select_window.selecting = True
@@ -328,12 +337,14 @@ class ScreenTranslatorApp(QMainWindow):
     def on_mouse_drag(self, event):
         # 绘制选择框
         if self.select_window.selecting:
+            # 应用缩放因子，确保坐标正确
             self.select_window.end_x = event.globalX()
             self.select_window.end_y = event.globalY()
             self.select_window.update()
     
     def on_mouse_up(self, event):
         # 记录结束坐标并关闭选择窗口
+        # 应用缩放因子，确保坐标正确
         self.select_window.end_x = event.globalX()
         self.select_window.end_y = event.globalY()
         self.select_window.selecting = False
@@ -442,8 +453,13 @@ class ScreenTranslatorApp(QMainWindow):
                 
                 # 截取选定区域
                 x, y, width, height = self.current_region
-                logger.debug(f"截取区域: x={x}, y={y}, width={width}, height={height}")
-                screenshot = pyautogui.screenshot(region=(x, y, width, height))
+                # 应用缩放因子，确保坐标正确
+                scaled_x = int(x)
+                scaled_y = int(y)
+                scaled_width = int(width)
+                scaled_height = int(height)
+                logger.debug(f"截取区域: x={scaled_x}, y={scaled_y}, width={scaled_width}, height={scaled_height}")
+                screenshot = pyautogui.screenshot(region=(scaled_x, scaled_y, scaled_width, scaled_height))
                 logger.debug("截图完成")
                 
                 # 更新UI

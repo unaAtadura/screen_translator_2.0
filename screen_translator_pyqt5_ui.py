@@ -2,7 +2,7 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QLabel, QPushButton, 
                              QVBoxLayout, QHBoxLayout, QFrame, QScrollArea
-from PyQt5.QtCore import Qt, QPoint, QEvent, QTimer
+from PyQt5.QtCore import Qt, QPoint, QEvent, QTimer, QScreen
 from PyQt5.QtGui import QCursor, QPainter, QPen, QColor
 from PyQt5.uic import loadUi
 import pyautogui
@@ -72,6 +72,11 @@ class ScreenTranslatorApp(QMainWindow):
         super().__init__()
         # 加载UI文件
         loadUi('ui/main_window.ui', self)
+        
+        # 获取系统缩放因子
+        self.screen = QApplication.primaryScreen()
+        self.device_pixel_ratio = self.screen.devicePixelRatio()
+        logger.debug(f"系统缩放因子: {self.device_pixel_ratio}")
         
         # 区域选择相关变量
         self.start_x = 0
@@ -403,8 +408,13 @@ class ScreenTranslatorApp(QMainWindow):
                 
                 # 截取选定区域
                 x, y, width, height = self.current_region
-                logger.debug(f"截取区域: x={x}, y={y}, width={width}, height={height}")
-                screenshot = pyautogui.screenshot(region=(x, y, width, height))
+                # 应用缩放因子，确保坐标正确
+                scaled_x = int(x)
+                scaled_y = int(y)
+                scaled_width = int(width)
+                scaled_height = int(height)
+                logger.debug(f"截取区域: x={scaled_x}, y={scaled_y}, width={scaled_width}, height={scaled_height}")
+                screenshot = pyautogui.screenshot(region=(scaled_x, scaled_y, scaled_width, scaled_height))
                 logger.debug("截图完成")
                 
                 # 更新UI
