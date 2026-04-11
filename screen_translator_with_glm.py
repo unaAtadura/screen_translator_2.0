@@ -684,10 +684,17 @@ class ScreenTranslatorApp:
                 translated_text = ""
                 lines = result.split('\n')
                 for line in lines:
-                    if line.startswith('识别结果：'):
-                        recognized_text = line[6:].strip()
-                    elif line.startswith('翻译结果：'):
-                        translated_text = line[6:].strip()
+                    line = line.strip()
+                    if '识别结果：' in line:
+                        # 找到冒号位置，提取后面的内容
+                        colon_pos = line.find('：')
+                        if colon_pos != -1:
+                            recognized_text = line[colon_pos+1:].strip()
+                    elif '翻译结果：' in line:
+                        # 找到冒号位置，提取后面的内容
+                        colon_pos = line.find('：')
+                        if colon_pos != -1:
+                            translated_text = line[colon_pos+1:].strip()
                 
                 # 保存到缓存
                 cache_key = img_str[:100]  # 使用图像的前100个字符作为缓存键
