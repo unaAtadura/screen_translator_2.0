@@ -3,6 +3,7 @@ debug.log
 
 # API密钥文件
 key.txt
+glm-key.txt
 
 # Python缓存
 __pycache__/
