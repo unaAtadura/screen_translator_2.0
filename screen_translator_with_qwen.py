@@ -72,9 +72,33 @@ class ScreenTranslatorApp:
                                    bg='red', fg='white', font=('Arial', 12), state=tk.DISABLED)
         self.close_btn.pack(pady=5)
         
+        # 快捷键设置区域
+        self.shortcut_frame = tk.Frame(root)
+        self.shortcut_frame.pack(pady=5)
+        
+        self.shortcut_label = tk.Label(self.shortcut_frame, text="重新识别快捷键:", font=("Arial", 10))
+        self.shortcut_label.pack(side=tk.LEFT, padx=5)
+        
+        self.current_shortcut = "F1"  # 默认快捷键
+        self.shortcut_entry = tk.Entry(self.shortcut_frame, width=10, font=("Arial", 10))
+        self.shortcut_entry.insert(0, self.current_shortcut)
+        self.shortcut_entry.pack(side=tk.LEFT, padx=5)
+        
+        self.set_shortcut_btn = tk.Button(self.shortcut_frame, text="设置", command=self.set_shortcut, font=("Arial", 10))
+        self.set_shortcut_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.shortcut_hint = tk.Label(root, text="设置后按快捷键可触发重新识别（窗口失去焦点也有效）", font=("Arial", 8), fg="gray")
+        self.shortcut_hint.pack(pady=2)
+        
         # 状态标签
         self.status_label = tk.Label(root, text="就绪", font=("Arial", 10))
         self.status_label.pack(pady=5)
+        
+        # 快捷键相关变量
+        self.hotkey_handle = None  # 保存快捷键注册句柄
+        
+        # 注册全局快捷键
+        self.register_global_shortcut()
         
         # 区域选择相关变量
         self.start_x = 0
@@ -1104,6 +1128,61 @@ class ScreenTranslatorApp:
             self.translate_select_window.destroy()
             self.translate_select_window = None
         self.status_label.config(text="选择已取消")
+    
+    def set_shortcut(self):
+        """设置重新识别快捷键"""
+        new_shortcut = self.shortcut_entry.get().strip()
+        if not new_shortcut:
+            self.status_label.config(text="请输入快捷键")
+            return
+        
+        # 尝试取消旧的快捷键注册
+        self.unregister_global_shortcut()
+        
+        # 更新当前快捷键
+        self.current_shortcut = new_shortcut
+        
+        # 注册新的快捷键
+        self.register_global_shortcut()
+        
+        self.status_label.config(text=f"快捷键已设置为: {new_shortcut}")
+        logger.info(f"重新识别快捷键已设置为: {new_shortcut}")
+    
+    def register_global_shortcut(self):
+        """注册全局快捷键（窗口失去焦点也有效）"""
+        try:
+            import keyboard
+            # 取消之前的注册
+            self.unregister_global_shortcut()
+            
+            # 注册新的快捷键，保存句柄
+            self.hotkey_handle = keyboard.add_hotkey(self.current_shortcut, self.on_shortcut_pressed, suppress=False)
+            logger.info(f"全局快捷键 {self.current_shortcut} 注册成功")
+        except ImportError:
+            logger.warning("未安装 keyboard 库，全局快捷键功能不可用")
+            self.status_label.config(text="警告: 需安装 keyboard 库以使用全局快捷键")
+        except Exception as e:
+            logger.error(f"注册快捷键失败: {str(e)}")
+            self.status_label.config(text=f"快捷键注册失败: {str(e)}")
+    
+    def unregister_global_shortcut(self):
+        """取消全局快捷键注册"""
+        if self.hotkey_handle is not None:
+            try:
+                import keyboard
+                keyboard.remove_hotkey(self.hotkey_handle)
+                self.hotkey_handle = None
+            except Exception as e:
+                logger.warning(f"取消快捷键注册失败: {str(e)}")
+    
+    def on_shortcut_pressed(self):
+        """快捷键触发时执行重新识别"""
+        logger.info(f"快捷键 {self.current_shortcut} 被按下，执行重新识别")
+        # 模拟点击重新识别按钮的效果
+        if self.current_region:
+            self.recognize_area()
+        else:
+            logger.info("未选择识别区域，快捷键无效")
 
 if __name__ == "__main__":
     root = tk.Tk()
