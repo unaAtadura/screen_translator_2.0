@@ -10,10 +10,9 @@ from openai import OpenAI
 
 # 配置日志
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('debug.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -38,7 +37,7 @@ if api_key:
             api_key=api_key,
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
         )
-        logger.debug("通义千问AI客户端初始化成功")
+        logger.info("通义千问AI客户端初始化成功")
     except Exception as e:
         logger.error(f"通义千问AI客户端初始化失败: {str(e)}")
 
@@ -46,7 +45,7 @@ class ScreenTranslatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("屏幕翻译工具 (v2.0)")
-        logger.debug("程序启动，初始化界面")
+        logger.info("程序启动，初始化界面")
         
         # 先不设置固定大小，让界面元素自动调整
         self.root.wm_attributes('-topmost', False)  # 主界面不需要保持在顶层
@@ -435,51 +434,61 @@ class ScreenTranslatorApp:
             self.status_label.config(text="未选择区域")
             return
         
+        # 检查是否已有正在进行的识别，防止重复点击
+        if self.ai_interaction_active:
+            logger.info("已有识别任务进行中，忽略重复点击")
+            return
+        
         # 启动线程处理AI交互
         def recognize_thread():
+            # 在启动时保存截图，避免在线程中使用后可能被回收
+            screenshot_local = None
+            
             try:
                 # 设置AI交互标志
                 self.ai_interaction_active = True
-                logger.debug("开始识别区域文字")
+                logger.info("开始识别区域文字")
                 
                 # 截取选定区域
                 x, y, width, height = self.current_region
-                logger.debug(f"截取区域: x={x}, y={y}, width={width}, height={height}")
-                screenshot = pyautogui.screenshot(region=(x, y, width, height))
-                logger.debug("截图完成")
+                logger.info(f"截取区域: x={x}, y={y}, width={width}, height={height}")
+                screenshot_local = pyautogui.screenshot(region=(x, y, width, height))
+                logger.info("截图完成")
                 
-                # 更新UI
+                # 先在主线程中更新UI显示识别中状态
+                buffered = io.BytesIO()
+                screenshot_local.save(buffered, format="JPEG", quality=75)
+                image_size_kb = len(buffered.getvalue()) / 1024
+                
+                # 使用线程安全的方式更新UI
                 def update_ui_recognizing():
-                    # 计算图像大小
-                    buffered = io.BytesIO()
-                    screenshot.save(buffered, format="JPEG", quality=75)
-                    image_size_kb = len(buffered.getvalue()) / 1024
-                    
                     self.status_label.config(text="正在识别...")
-                    # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.config(text="识别中...")
-                    # 更新翻译窗口文本
                     if hasattr(self, 'translate_text_widget'):
                         self.translate_text_widget.config(text=f"正在识别. . .(图像大小 {image_size_kb:.1f} kb)")
-                    self.root.update()
-                
                 self.root.after(0, update_ui_recognizing)
-                # 添加小延迟，让用户看到状态消息
-                self.root.after(500)
+                
+                # 使用time.sleep代替root.after，避免在非主线程调用tk方法
+                import time
+                time.sleep(0.5)
+                
+                # 检查是否已中止
+                if not self.ai_interaction_active:
+                    return
                 
                 # 压缩图片
-                compressed_image = self.compress_image(screenshot)
+                compressed_image = self.compress_image(screenshot_local)
                 
                 # 检查是否已中止
                 if not self.ai_interaction_active:
                     return
                 
                 # 使用通义千问AI进行OCR识别和翻译
-                logger.debug("使用通义千问AI进行OCR识别和翻译")
+                logger.info("使用通义千问AI进行OCR识别和翻译")
                 text, translated_text = self.recognize_with_qwen(compressed_image)
-                logger.debug(f"识别完成，结果: {text[:100]}..." if len(text) > 100 else f"识别完成，结果: {text}")
-                logger.debug(f"翻译完成，结果: {translated_text[:100]}..." if len(translated_text) > 100 else f"翻译完成，结果: {translated_text}")
+                logger.info(f"识别完成，结果长度: {len(text)}")
+                logger.info(f"翻译完成，结果长度: {len(translated_text)}")
                 
                 # 检查是否已中止
                 if not self.ai_interaction_active:
@@ -488,28 +497,22 @@ class ScreenTranslatorApp:
                 # 更新UI
                 def update_ui_completed():
                     self.status_label.config(text="翻译完成")
-                    # 更新翻译窗口状态
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.config(text="翻译完成")
-                    # 更新翻译窗口文本
                     if hasattr(self, 'translate_text_widget'):
                         self.translate_text_widget.config(text=f"{translated_text if translated_text else '翻译失败'}\n\n原文: {text}")
-                    self.root.update()
-                
                 self.root.after(0, update_ui_completed)
             except Exception as e:
                 # 更新UI
-                def update_ui_error(e):
-                    self.status_label.config(text=f"错误: {str(e)}")
-                    # 更新翻译窗口状态
+                error_msg = str(e)
+                def update_ui_error():
+                    self.status_label.config(text=f"错误: {error_msg}")
                     if hasattr(self, 'translate_status_label'):
-                        self.translate_status_label.config(text=f"识别失败: {str(e)}")
-                    # 更新翻译窗口文本
+                        self.translate_status_label.config(text=f"识别失败: {error_msg}")
                     if hasattr(self, 'translate_text_widget'):
-                        self.translate_text_widget.config(text=f"识别失败: {str(e)}")
-                
-                self.root.after(0, lambda e=e: update_ui_error(e))
-                logger.error(f"识别过程出错: {str(e)}")
+                        self.translate_text_widget.config(text=f"识别失败: {error_msg}")
+                self.root.after(0, update_ui_error)
+                logger.error(f"识别过程出错: {error_msg}")
             finally:
                 # 重置AI交互标志
                 self.ai_interaction_active = False
@@ -622,7 +625,7 @@ class ScreenTranslatorApp:
     
     def recognize_with_qwen(self, image):
         """使用通义千问AI进行OCR识别和翻译"""
-        logger.debug("开始通义千问AI图像识别和翻译")
+        logger.info("开始通义千问AI图像识别和翻译")
         # 检查是否已中止
         if not self.ai_interaction_active:
             raise Exception("AI交互已中止")
@@ -633,11 +636,9 @@ class ScreenTranslatorApp:
             raise Exception("通义千问AI客户端未初始化，请检查key.txt文件中的API密钥")
 
         # 将图像转换为base64编码
-        logger.debug("将图像转换为base64编码")
         buffered = io.BytesIO()
         image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        logger.debug(f"图像base64编码长度: {len(img_str)} 字符")
 
         # 检查是否已中止
         if not self.ai_interaction_active:
@@ -649,7 +650,7 @@ class ScreenTranslatorApp:
 
         for attempt in range(max_retries):
             try:
-                logger.debug(f"发送OCR和翻译请求到通义千问AI (尝试 {attempt + 1}/{max_retries})")
+                logger.info(f"发送OCR和翻译请求到通义千问AI (尝试 {attempt + 1}/{max_retries})")
 
                 response = qwen_client.chat.completions.create(
                     model="qwen3.6-flash",
@@ -677,7 +678,7 @@ class ScreenTranslatorApp:
                     raise Exception("AI交互已中止")
 
                 result = response.choices[0].message.content
-                logger.debug(f"通义千问AI处理完成，结果: {result[:100]}..." if len(result) > 100 else f"通义千问AI处理完成，结果: {result}")
+                logger.info("通义千问AI处理完成")
 
                 # 解析结果
                 recognized_text = ""
