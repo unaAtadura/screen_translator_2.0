@@ -198,7 +198,7 @@ class ScreenTranslatorApp:
             self.translate_canvas.delete('selection')
             self.translate_canvas.create_rectangle(
                 self.translate_start_x, self.translate_start_y, event.x, event.y,
-                outline='blue', width=2, tags='selection'
+                outline='white', width=2, tags='selection'
             )
     
     def on_translate_mouse_up(self, event):
