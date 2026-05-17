@@ -261,50 +261,19 @@ class ScreenTranslatorApp:
         main_frame = tk.Frame(self.translate_window, bg='black')
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 1. 创建画布（用来承载滚动）
-        canvas = tk.Canvas(main_frame, bg='black')
-        canvas.pack(side="left", fill="both", expand=True)
-        
-        # 2. 绑定滚动（修复滚动区域更新问题）
-        def update_scrollregion(event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.bind('<Configure>', update_scrollregion)
-        
-        # 3. 新增：全窗口滚轮滚动逻辑（兼容Windows/Mac/Linux）
-        def on_mouse_wheel(event):
-            # 简化滚动逻辑，确保滚动方向正确
-            # 向下滚动（鼠标轮向下）→ 内容向下滚动，查看更多内容
-            # 向上滚动（鼠标轮向上）→ 内容向上滚动，回到顶部
-            if event.num == 4 or (event.delta > 0):  # 向上滚动
-                canvas.yview_scroll(-1, "units")
-            elif event.num == 5 or (event.delta < 0):  # 向下滚动
-                canvas.yview_scroll(1, "units")
-        
-        # 绑定滚轮事件到整个翻译窗口
-        self.translate_window.bind("<MouseWheel>", on_mouse_wheel)  # Windows/Mac 新版
-        self.translate_window.bind("<Button-4>", on_mouse_wheel)    # Linux 向上
-        self.translate_window.bind("<Button-5>", on_mouse_wheel)    # Linux 向下
-        
-        # 4. 在画布内放一个 frame
-        inner_frame = tk.Frame(canvas, bg='black')
-        canvas.create_window((0, 0), window=inner_frame, anchor="nw")
-        
         # 创建标签用于显示翻译内容
-        self.translate_text_widget = tk.Label(inner_frame, 
+        self.translate_text_widget = tk.Label(main_frame, 
                                            font=("Arial", 12), 
                                            fg='white', 
                                            bg='black',
-                                           wraplength=width-40,  # 减去边距
+                                           wraplength=width-40,
                                            justify=tk.LEFT,
                                            anchor=tk.NW)
         self.translate_text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 创建状态标签
-        self.translate_status_label = tk.Label(inner_frame, text="就绪", font=("Arial", 8), fg='white', bg='black')
+        self.translate_status_label = tk.Label(main_frame, text="就绪", font=("Arial", 8), fg='white', bg='black')
         self.translate_status_label.pack(side=tk.BOTTOM, padx=10, pady=5)
-        
-        # 初始化时强制更新一次滚动区域（避免初始无滚动）
-        self.translate_window.after(100, update_scrollregion)
     
     def select_area(self):
         """选择识别区域"""
