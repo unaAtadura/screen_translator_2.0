@@ -366,7 +366,7 @@ class ScreenTranslatorApp:
         self.border_window.geometry(f"{width}x{height}+{x}+{y}")
         self.border_window.overrideredirect(True)  # 无标题栏
         self.border_window.attributes('-topmost', True)
-        self.border_window.attributes('-alpha', 0.3)  # 降低透明度，使蒙版效果更自然
+        self.border_window.attributes('-alpha', 0.1)  # 降低透明度，使蒙版效果更自然
         
         # 绑定鼠标事件
         self.border_window.bind('<Button-1>', self.border_window_mouse_down)
