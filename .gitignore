@@ -34,3 +34,6 @@ dist/
 
 # 截图文件
 *.png
+
+# 语音合成文件
+cosyvoice.wav

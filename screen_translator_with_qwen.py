@@ -6,7 +6,11 @@ import base64
 import io
 import threading
 import logging
+import os
+import atexit
+import winsound
 from openai import OpenAI
+from dashscope.audio.http_tts.http_speech_synthesizer import HttpSpeechSynthesizer
 
 # 配置日志
 logging.basicConfig(
@@ -41,11 +45,38 @@ if api_key:
     except Exception as e:
         logger.error(f"通义千问AI客户端初始化失败: {str(e)}")
 
+COSYVOICE_WAV_FILE = "cosyvoice.wav"
+
+def cleanup_cosyvoice_wav():
+    """清理cosyvoice.wav文件"""
+    try:
+        if os.path.exists(COSYVOICE_WAV_FILE):
+            os.remove(COSYVOICE_WAV_FILE)
+            logger.info(f"已删除旧文件: {COSYVOICE_WAV_FILE}")
+    except Exception as e:
+        logger.error(f"删除文件失败: {e}")
+
+def play_cosyvoice_wav():
+    """播放cosyvoice.wav文件"""
+    try:
+        if os.path.exists(COSYVOICE_WAV_FILE):
+            winsound.PlaySound(COSYVOICE_WAV_FILE, winsound.SND_FILENAME)
+            logger.info("音频播放完成")
+    except Exception as e:
+        logger.error(f"音频播放失败: {e}")
+
 class ScreenTranslatorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("屏幕翻译工具 (v2.0)")
         logger.info("程序启动，初始化界面")
+        
+        # 清理旧的语音文件
+        cleanup_cosyvoice_wav()
+        
+        # 注册程序关闭时的清理函数
+        atexit.register(cleanup_cosyvoice_wav)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         
         # 先不设置固定大小，让界面元素自动调整
         self.root.wm_attributes('-topmost', False)  # 主界面不需要保持在顶层
@@ -274,6 +305,34 @@ class ScreenTranslatorApp:
         # 创建状态标签
         self.translate_status_label = tk.Label(main_frame, text="就绪", font=("Arial", 8), fg='white', bg='black')
         self.translate_status_label.pack(side=tk.BOTTOM, padx=10, pady=5)
+        
+        # 创建发音按钮窗口，放在翻译窗口上方
+        button_width = 100
+        button_height = 40
+        margin = 50
+        
+        button_x = x + width - button_width
+        button_y = y - button_height - 5
+        
+        screen_height = self.root.winfo_screenheight()
+        if button_y < margin:
+            button_y = y + height + 5
+            if button_y + button_height > screen_height - margin:
+                button_y = y + margin
+                button_x = x + width - button_width - margin
+        
+        self.translate_button_window = tk.Toplevel(self.root)
+        self.translate_button_window.geometry(f"{button_width}x{button_height}+{button_x}+{button_y}")
+        self.translate_button_window.overrideredirect(True)
+        self.translate_button_window.attributes('-topmost', True)
+        self.translate_button_window.attributes('-alpha', 1.0)
+        
+        button_frame = tk.Frame(self.translate_button_window, bg='cyan', bd=3, relief=tk.RAISED)
+        button_frame.pack(fill=tk.BOTH, expand=True)
+        
+        speak_btn = tk.Button(button_frame, text="发音", command=self.speak_original_text, 
+                             bg='deepskyblue', fg='black', font=("Arial", 10, "bold"), padx=5, pady=4)
+        speak_btn.pack(side=tk.LEFT, padx=3, pady=3, fill=tk.BOTH, expand=True)
     
     def select_area(self):
         """选择识别区域"""
@@ -489,6 +548,7 @@ class ScreenTranslatorApp:
                 
                 # 更新UI
                 def update_ui_completed():
+                    cleanup_cosyvoice_wav()
                     self.status_label.config(text="翻译完成")
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.config(text="翻译完成")
@@ -932,6 +992,86 @@ class ScreenTranslatorApp:
         
         self.status_label.config(text="所有窗口已关闭")
     
+    def speak_original_text(self):
+        """将原文部分合成语音"""
+        if not hasattr(self, 'translate_text_widget'):
+            logger.warning("翻译窗口未创建，无法发音")
+            return
+        
+        text = self.translate_text_widget.cget("text")
+        if not text or text == "就绪" or "识别中" in text:
+            logger.info("无有效文本可发音")
+            return
+        
+        # 提取原文部分（格式为：翻译文本\n\n原文: 原始文本）
+        original_text = text
+        if "原文:" in text:
+            original_text = text.split("原文:")[-1].strip()
+        
+        # 如果文件已存在，直接播放
+        if os.path.exists(COSYVOICE_WAV_FILE):
+            logger.info("音频文件已存在，直接播放")
+            threading.Thread(target=play_cosyvoice_wav, daemon=True).start()
+            return
+        
+        # 否则进行语音合成
+        def synthesize_thread():
+            try:
+                logger.info("开始语音合成")
+                
+                # 更新UI状态
+                def update_ui_start():
+                    if hasattr(self, 'translate_status_label'):
+                        self.translate_status_label.config(text="正在合成语音...")
+                self.root.after(0, update_ui_start)
+                
+                # 调用语音合成API
+                stream_result = HttpSpeechSynthesizer.call(
+                    model="cosyvoice-v3-flash",
+                    text=original_text[:500],  # 限制文本长度
+                    voice="longanhuan",
+                    format="wav",
+                    sample_rate=24000,
+                    stream=True,
+                    api_key=api_key,
+                )
+                
+                # 收集音频数据
+                audio_chunks = []
+                for chunk in stream_result:
+                    if not chunk.audio_url and chunk.audio_data:
+                        audio_chunks.append(chunk.audio_data)
+                
+                # 保存音频文件
+                full_audio = b"".join(audio_chunks)
+                with open(COSYVOICE_WAV_FILE, "wb") as f:
+                    f.write(full_audio)
+                
+                logger.info(f"语音合成完成，文件已保存: {COSYVOICE_WAV_FILE}")
+                
+                # 播放音频
+                def update_ui_done():
+                    if hasattr(self, 'translate_status_label'):
+                        self.translate_status_label.config(text="语音合成完成，正在播放...")
+                self.root.after(0, update_ui_done)
+                
+                play_cosyvoice_wav()
+                
+                # 恢复UI状态
+                def update_ui_restore():
+                    if hasattr(self, 'translate_status_label'):
+                        self.translate_status_label.config(text="翻译完成")
+                self.root.after(0, update_ui_restore)
+                
+            except Exception as e:
+                logger.error(f"语音合成失败: {e}")
+                def update_ui_error():
+                    if hasattr(self, 'translate_status_label'):
+                        self.translate_status_label.config(text=f"语音合成失败: {str(e)}")
+                self.root.after(0, update_ui_error)
+        
+        threading.Thread(target=synthesize_thread, daemon=True).start()
+    
     def translate_window_mouse_down(self, event):
         """翻译窗口鼠标按下事件"""
         # 检查是否在窗口边缘（用于拉伸）
@@ -1152,6 +1292,12 @@ class ScreenTranslatorApp:
             self.recognize_area()
         else:
             logger.info("未选择识别区域，快捷键无效")
+    
+    def on_window_close(self):
+        """程序关闭时的清理"""
+        logger.info("程序正在关闭，清理资源")
+        cleanup_cosyvoice_wav()
+        self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
