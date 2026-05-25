@@ -8,7 +8,8 @@ import threading
 import logging
 import os
 import atexit
-import winsound
+import wave
+import pyaudio
 from openai import OpenAI
 from dashscope.audio.http_tts.http_speech_synthesizer import HttpSpeechSynthesizer
 
@@ -56,11 +57,35 @@ def cleanup_cosyvoice_wav():
     except Exception as e:
         logger.error(f"删除文件失败: {e}")
 
-def play_cosyvoice_wav():
+def play_cosyvoice_wav(stop_event=None):
     """播放cosyvoice.wav文件"""
     try:
-        if os.path.exists(COSYVOICE_WAV_FILE):
-            winsound.PlaySound(COSYVOICE_WAV_FILE, winsound.SND_FILENAME)
+        if not os.path.exists(COSYVOICE_WAV_FILE):
+            return
+        
+        wf = wave.open(COSYVOICE_WAV_FILE, 'rb')
+        p = pyaudio.PyAudio()
+        
+        stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                       channels=wf.getnchannels(),
+                       rate=wf.getframerate(),
+                       output=True)
+        
+        chunk_size = 1024
+        data = wf.readframes(chunk_size)
+        
+        while data:
+            if stop_event and stop_event.is_set():
+                break
+            stream.write(data)
+            data = wf.readframes(chunk_size)
+        
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        wf.close()
+        
+        if not (stop_event and stop_event.is_set()):
             logger.info("音频播放完成")
     except Exception as e:
         logger.error(f"音频播放失败: {e}")
@@ -77,6 +102,12 @@ class ScreenTranslatorApp:
         # 注册程序关闭时的清理函数
         atexit.register(cleanup_cosyvoice_wav)
         self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
+        
+        # 语音合成相关状态
+        self.synthesizing = False
+        self.playing = False
+        self.play_stop_event = None
+        self.play_thread = None
         
         # 先不设置固定大小，让界面元素自动调整
         self.root.wm_attributes('-topmost', False)  # 主界面不需要保持在顶层
@@ -1003,6 +1034,17 @@ class ScreenTranslatorApp:
             logger.info("无有效文本可发音")
             return
         
+        # 如果正在合成中，忽略重复点击
+        if self.synthesizing:
+            logger.info("正在合成中，忽略重复点击")
+            return
+        
+        # 停止当前播放
+        if self.playing and self.play_stop_event:
+            self.play_stop_event.set()
+            if self.play_thread and self.play_thread.is_alive():
+                self.play_thread.join(timeout=0.5)
+        
         # 提取原文部分（格式为：翻译文本\n\n原文: 原始文本）
         original_text = text
         if "原文:" in text:
@@ -1010,14 +1052,18 @@ class ScreenTranslatorApp:
         
         # 如果文件已存在，直接播放
         if os.path.exists(COSYVOICE_WAV_FILE):
-            logger.info("音频文件已存在，直接播放")
-            threading.Thread(target=play_cosyvoice_wav, daemon=True).start()
+            logger.info("音频文件已存在，停止当前播放并重新播放")
+            self.play_stop_event = threading.Event()
+            self.playing = True
+            self.play_thread = threading.Thread(target=self._play_audio, args=(self.play_stop_event,), daemon=True)
+            self.play_thread.start()
             return
         
         # 否则进行语音合成
         def synthesize_thread():
             try:
                 logger.info("开始语音合成")
+                self.synthesizing = True
                 
                 # 更新UI状态
                 def update_ui_start():
@@ -1048,6 +1094,7 @@ class ScreenTranslatorApp:
                     f.write(full_audio)
                 
                 logger.info(f"语音合成完成，文件已保存: {COSYVOICE_WAV_FILE}")
+                self.synthesizing = False
                 
                 # 播放音频
                 def update_ui_done():
@@ -1055,22 +1102,31 @@ class ScreenTranslatorApp:
                         self.translate_status_label.config(text="语音合成完成，正在播放...")
                 self.root.after(0, update_ui_done)
                 
-                play_cosyvoice_wav()
-                
-                # 恢复UI状态
-                def update_ui_restore():
-                    if hasattr(self, 'translate_status_label'):
-                        self.translate_status_label.config(text="翻译完成")
-                self.root.after(0, update_ui_restore)
+                self.play_stop_event = threading.Event()
+                self.playing = True
+                self._play_audio(self.play_stop_event)
                 
             except Exception as e:
                 logger.error(f"语音合成失败: {e}")
+                self.synthesizing = False
                 def update_ui_error():
                     if hasattr(self, 'translate_status_label'):
                         self.translate_status_label.config(text=f"语音合成失败: {str(e)}")
                 self.root.after(0, update_ui_error)
         
         threading.Thread(target=synthesize_thread, daemon=True).start()
+    
+    def _play_audio(self, stop_event):
+        """播放音频并在播放完成后更新UI"""
+        try:
+            play_cosyvoice_wav(stop_event)
+        finally:
+            self.playing = False
+            if not stop_event.is_set():
+                def update_ui_restore():
+                    if hasattr(self, 'translate_status_label'):
+                        self.translate_status_label.config(text="翻译完成")
+                self.root.after(0, update_ui_restore)
     
     def translate_window_mouse_down(self, event):
         """翻译窗口鼠标按下事件"""
@@ -1090,18 +1146,16 @@ class ScreenTranslatorApp:
     def translate_window_mouse_move(self, event):
         """翻译窗口鼠标移动事件"""
         if self.resizing:
-            # 执行拉伸
             self.resize_window(self.translate_window, event.x, event.y, self.resize_edge)
         elif self.dragging:
-            # 执行拖动
             self.move_window(self.translate_window, event.x - self.drag_start_x, event.y - self.drag_start_y)
+            if hasattr(self, 'translate_button_window') and self.translate_button_window:
+                self.move_window(self.translate_button_window, event.x - self.drag_start_x, event.y - self.drag_start_y)
         else:
-            # 检查鼠标是否在窗口边缘，更改光标
             edge = self.get_window_edge(self.translate_window, event.x, event.y)
             if edge:
                 cursor = self.get_cursor_for_edge(edge)
             else:
-                # 鼠标在窗口内部，显示十字箭头光标
                 cursor = "fleur"
             self.translate_window.config(cursor=cursor)
     
