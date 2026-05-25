@@ -1008,10 +1008,13 @@ class ScreenTranslatorApp:
             self.button_window = None
         self.current_region = None
         
-        # 关闭译文窗口
+        # 关闭译文窗口和发音按钮窗口
         if hasattr(self, 'translate_window') and self.translate_window:
             self.translate_window.destroy()
             self.translate_window = None
+        if hasattr(self, 'translate_button_window') and self.translate_button_window:
+            self.translate_button_window.destroy()
+            self.translate_button_window = None
         self.current_translate_region = None
         
         # 禁用识别区域按钮
