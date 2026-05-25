@@ -57,8 +57,13 @@ def cleanup_cosyvoice_wav():
     except Exception as e:
         logger.error(f"删除文件失败: {e}")
 
-def play_cosyvoice_wav(stop_event=None):
-    """播放cosyvoice.wav文件"""
+def play_cosyvoice_wav(stop_event=None, speed=1.0):
+    """播放cosyvoice.wav文件，支持变速播放
+    
+    Args:
+        stop_event: 停止事件
+        speed: 播放速度，1.0为正常速度，0.75为0.75倍速
+    """
     try:
         if not os.path.exists(COSYVOICE_WAV_FILE):
             return
@@ -66,19 +71,83 @@ def play_cosyvoice_wav(stop_event=None):
         wf = wave.open(COSYVOICE_WAV_FILE, 'rb')
         p = pyaudio.PyAudio()
         
-        stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
-                       channels=wf.getnchannels(),
-                       rate=wf.getframerate(),
+        # 获取音频参数
+        sample_width = wf.getsampwidth()
+        channels = wf.getnchannels()
+        rate = wf.getframerate()
+        
+        # 打开音频流
+        stream = p.open(format=p.get_format_from_width(sample_width),
+                       channels=channels,
+                       rate=rate,
                        output=True)
         
+        # 读取所有音频数据到内存
+        all_data = []
         chunk_size = 1024
         data = wf.readframes(chunk_size)
-        
         while data:
+            all_data.append(data)
+            data = wf.readframes(chunk_size)
+        
+        all_data_bytes = b''.join(all_data)
+        
+        # 将字节数据转换为样本数组
+        import struct
+        num_samples = len(all_data_bytes) // (sample_width * channels)
+        format_str = f"{num_samples * channels}h" if sample_width == 2 else f"{num_samples * channels}B"
+        samples = list(struct.unpack(format_str, all_data_bytes))
+        
+        # 变速重采样
+        if speed != 1.0:
+            new_samples = []
+            num_new_samples = int(num_samples / speed)
+            for i in range(num_new_samples):
+                # 计算原样本位置
+                orig_pos = i * speed
+                # 使用简单的线性插值
+                floor_pos = int(orig_pos)
+                frac = orig_pos - floor_pos
+                
+                if floor_pos >= num_samples - 1:
+                    floor_pos = num_samples - 2
+                    frac = 1.0
+                
+                for ch in range(channels):
+                    idx1 = floor_pos * channels + ch
+                    idx2 = idx1 + channels
+                    
+                    if idx2 >= len(samples):
+                        idx2 = idx1
+                    
+                    # 线性插值
+                    val1 = samples[idx1]
+                    val2 = samples[idx2]
+                    new_val = int(val1 * (1 - frac) + val2 * frac)
+                    
+                    # 限制范围
+                    if sample_width == 2:
+                        new_val = max(-32768, min(32767, new_val))
+                    else:
+                        new_val = max(0, min(255, new_val))
+                    
+                    new_samples.append(new_val)
+            
+            # 转换回字节数据
+            samples = new_samples
+            num_samples = num_new_samples
+        
+        # 打包为字节
+        format_str = f"{len(samples)}h" if sample_width == 2 else f"{len(samples)}B"
+        audio_data = struct.pack(format_str, *samples)
+        
+        # 分块播放
+        chunk_size = 1024 * channels
+        for i in range(0, len(audio_data), chunk_size):
             if stop_event and stop_event.is_set():
                 break
-            stream.write(data)
-            data = wf.readframes(chunk_size)
+            chunk = audio_data[i:i + chunk_size]
+            stream.write(chunk)
         
         stream.stop_stream()
         stream.close()
@@ -86,7 +155,7 @@ def play_cosyvoice_wav(stop_event=None):
         wf.close()
         
         if not (stop_event and stop_event.is_set()):
-            logger.info("音频播放完成")
+            logger.info(f"音频播放完成(速度: {speed}x)")
     except Exception as e:
         logger.error(f"音频播放失败: {e}")
 
@@ -108,6 +177,10 @@ class ScreenTranslatorApp:
         self.playing = False
         self.play_stop_event = None
         self.play_thread = None
+        # 播放速度状态：0=正常速度(1.0x)，1=0.75x，循环切换
+        self.speed_mode = 0
+        # 标记是否是新音频
+        self.is_new_audio = False
         
         # 先不设置固定大小，让界面元素自动调整
         self.root.wm_attributes('-topmost', False)  # 主界面不需要保持在顶层
@@ -1055,10 +1128,29 @@ class ScreenTranslatorApp:
         
         # 如果文件已存在，直接播放
         if os.path.exists(COSYVOICE_WAV_FILE):
-            logger.info("音频文件已存在，停止当前播放并重新播放")
+            # 如果是新音频，重置速度模式
+            if self.is_new_audio:
+                self.speed_mode = 0
+                self.is_new_audio = False
+            
+            # 计算当前速度
+            speed = 1.0 if self.speed_mode == 0 else 0.75
+            speed_text = "正常速度" if self.speed_mode == 0 else "0.75倍速"
+            
+            # 切换速度模式
+            self.speed_mode = (self.speed_mode + 1) % 2
+            
+            logger.info(f"音频文件已存在，停止当前播放并以{speed_text}重新播放")
+            
+            # 更新UI显示速度
+            def update_ui_speed():
+                if hasattr(self, 'translate_status_label'):
+                    self.translate_status_label.config(text=f"正在播放({speed_text})...")
+            self.root.after(0, update_ui_speed)
+            
             self.play_stop_event = threading.Event()
             self.playing = True
-            self.play_thread = threading.Thread(target=self._play_audio, args=(self.play_stop_event,), daemon=True)
+            self.play_thread = threading.Thread(target=self._play_audio, args=(self.play_stop_event, speed), daemon=True)
             self.play_thread.start()
             return
         
@@ -1099,15 +1191,19 @@ class ScreenTranslatorApp:
                 logger.info(f"语音合成完成，文件已保存: {COSYVOICE_WAV_FILE}")
                 self.synthesizing = False
                 
+                # 标记为新音频，重置速度模式
+                self.is_new_audio = True
+                self.speed_mode = 0
+                
                 # 播放音频
                 def update_ui_done():
                     if hasattr(self, 'translate_status_label'):
-                        self.translate_status_label.config(text="语音合成完成，正在播放...")
+                        self.translate_status_label.config(text="语音合成完成，正在播放(正常速度)...")
                 self.root.after(0, update_ui_done)
                 
                 self.play_stop_event = threading.Event()
                 self.playing = True
-                self._play_audio(self.play_stop_event)
+                self._play_audio(self.play_stop_event, 1.0)
                 
             except Exception as e:
                 logger.error(f"语音合成失败: {e}")
@@ -1119,10 +1215,10 @@ class ScreenTranslatorApp:
         
         threading.Thread(target=synthesize_thread, daemon=True).start()
     
-    def _play_audio(self, stop_event):
+    def _play_audio(self, stop_event, speed=1.0):
         """播放音频并在播放完成后更新UI"""
         try:
-            play_cosyvoice_wav(stop_event)
+            play_cosyvoice_wav(stop_event, speed)
         finally:
             self.playing = False
             if not stop_event.is_set():
