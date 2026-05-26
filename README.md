@@ -31,6 +31,7 @@ pip install -r requirements.txt
 - `dashscope` - 阿里云DashScope SDK（用于语音合成）
 - `pyaudio` - 音频播放
 - `wave` - WAV文件处理
+- `keyboard` - 键盘监听（用于快捷键）
 
 ### API Key 配置
 
