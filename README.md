@@ -38,10 +38,12 @@ pip install -r requirements.txt
    - 注册阿里云账号并开通通义千问服务
    - 设置环境变量：`DASHSCOPE_API_KEY=your_api_key`
    - 或在代码中直接配置 `api_key` 变量
+   - 在程序所在目录创建key.txt，并填入API Key
 
 2. **CosyVoice API Key**（语音合成功能）
    - 注册阿里云账号并开通DashScope服务
    - 使用与通义千问相同的API Key
+   - 在程序所在目录创建key.txt，并填入API Key
 
 ## 使用方法
 
@@ -69,7 +71,7 @@ python screen_translator_with_qwen.py
    - 循环切换速度
 
 4. **重新识别**
-   - 使用快捷键重新识别当前区域（默认为F9）
+   - 使用快捷键重新识别当前区域（默认为F1）
    - 或点击主界面的「选择识别区域」按钮重新选择
 
 5. **关闭窗口**
@@ -80,7 +82,7 @@ python screen_translator_with_qwen.py
 
 | 快捷键 | 功能 |
 |--------|------|
-| F9 | 重新识别当前区域 |
+| F1 | 重新识别当前区域 |
 
 ## 项目结构
 
