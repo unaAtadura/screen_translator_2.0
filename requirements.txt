@@ -14,3 +14,6 @@ openai>=1.0.0
 
 # 阿里云DashScope SDK（用于语音合成）
 dashscope>=1.14.0
+
+# 键盘监听（用于快捷键）
+keyboard>=0.13.5
