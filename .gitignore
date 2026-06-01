@@ -37,3 +37,6 @@ dist/
 
 # 语音合成文件
 cosyvoice.wav
+
+# 音频文件
+*.ogg

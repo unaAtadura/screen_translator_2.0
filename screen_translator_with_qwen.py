@@ -10,6 +10,9 @@ import os
 import atexit
 import wave
 import pyaudio
+import asyncio
+import tempfile
+from pathlib import Path
 from openai import OpenAI
 from dashscope.audio.http_tts.http_speech_synthesizer import HttpSpeechSynthesizer
 
@@ -22,6 +25,30 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# 检查可选依赖
+try:
+    from shazamio import Shazam
+    SHAZAMIO_AVAILABLE = True
+except ImportError:
+    SHAZAMIO_AVAILABLE = False
+    logger.warning("shazamio 未安装，听歌识曲功能不可用")
+
+try:
+    import soundcard as sc
+    import soundfile as sf
+    import numpy as np
+    SOUNDCARD_AVAILABLE = True
+except ImportError:
+    SOUNDCARD_AVAILABLE = False
+    logger.warning("soundcard/soundfile/numpy 未安装，系统音频录制功能不可用")
+
+try:
+    import pyaudiowpatch as pyaudio_patch
+    PYAUDPATCH_AVAILABLE = True
+except ImportError:
+    PYAUDPATCH_AVAILABLE = False
+    logger.warning("pyaudiowpatch 未安装，蓝牙耳机系统音频录制功能不可用")
 
 # 读取API密钥
 def read_api_key():
@@ -207,6 +234,11 @@ class ScreenTranslatorApp:
                                    bg='red', fg='white', font=('Arial', 12), state=tk.DISABLED)
         self.close_btn.pack(pady=5)
         
+        # 听歌识曲按钮
+        self.shazam_btn = tk.Button(root, text="听歌识曲", command=self.recognize_song, 
+                                   bg='purple', fg='white', font=('Arial', 12))
+        self.shazam_btn.pack(pady=5)
+        
         # 快捷键设置区域
         self.shortcut_frame = tk.Frame(root)
         self.shortcut_frame.pack(pady=5)
@@ -264,6 +296,9 @@ class ScreenTranslatorApp:
         self.current_request = None
         # 翻译线程控制
         self.translating = False
+        
+        # 听歌识曲相关变量
+        self.shazam_recognizing = False
         
         # 窗口拖动和拉伸相关变量
         self.dragging = False
@@ -1445,6 +1480,618 @@ class ScreenTranslatorApp:
             self.recognize_area()
         else:
             logger.info("未选择识别区域，快捷键无效")
+    
+    def record_system_audio(self, duration=8, sample_rate=44100):
+        """录制系统音频（环形回录或立体声混音）
+        
+        Args:
+            duration: 录制时长（秒）
+            sample_rate: 采样率
+            
+        Returns:
+            临时音频文件路径，如果录制失败返回 None
+        """
+        result = None
+        errors = []
+        
+        # 方案 1: 使用 soundcard 的环形回录
+        if SOUNDCARD_AVAILABLE:
+            result, err = self._record_with_soundcard_silent(duration, sample_rate)
+            if result:
+                print("正在录制系统音频（约 8 秒）...")
+                return result
+            if err:
+                errors.append(f"方案1 (soundcard): {err}")
+        
+        # 方案 2: 使用 pyaudiowpatch 的 WASAPI 环回（支持蓝牙耳机）
+        if PYAUDPATCH_AVAILABLE:
+            result, err = self._record_with_pyaudiowpatch_silent(duration)
+            if result:
+                print("正在录制系统音频（约 8 秒）...")
+                return result
+            if err:
+                errors.append(f"方案2 (pyaudiowpatch): {err}")
+        
+        # 方案 3: 使用 pyaudio 录制立体声混音
+        result, err = self._record_with_pyaudio_silent(duration, sample_rate)
+        if result:
+            print("正在录制系统音频（约 8 秒）...")
+            return result
+        if err:
+            errors.append(f"方案3 (pyaudio): {err}")
+        
+        # 所有方案都失败，提供帮助信息
+        print("\n" + "=" * 60)
+        print("无法录制系统音频")
+        print("=" * 60)
+        print("可能的原因和解决方案:")
+        print("")
+        print("方案一: 安装 pyaudiowpatch（推荐，支持蓝牙耳机）")
+        print("  pip install pyaudiowpatch")
+        print("  这个库专门支持 Windows WASAPI 环回，包括蓝牙耳机")
+        print("")
+        print("方案二: 确保音频从内置扬声器或有线耳机播放")
+        print("  - 部分蓝牙耳机可能不支持系统音频环形回录")
+        print("  - 请切换到笔记本内置扬声器或 3.5mm 有线耳机")
+        print("")
+        print("方案三: 启用 Windows 立体声混音")
+        print("  1. 右键点击任务栏音量图标 → '声音设置'")
+        print("  2. 点击右侧 '声音控制面板'")
+        print("  3. 切换到 '录制' 选项卡")
+        print("  4. 右键空白处 → 勾选 '显示禁用的设备'")
+        print("  5. 找到 '立体声混音' → 右键 → 启用")
+        print("  6. 重启程序后重试")
+        print("=" * 60 + "\n")
+        
+        return None
+    
+    def _record_with_soundcard_silent(self, duration, sample_rate):
+        """使用 soundcard 录制系统音频（静默模式，不向用户输出信息）
+        
+        Returns:
+            (临时音频文件路径或 None, 错误信息或 None)
+        """
+        try:
+            logger.info("[方案1] 正在使用 soundcard 查找系统音频录制设备...")
+            
+            default_speaker = sc.default_speaker()
+            logger.info(f"使用默认扬声器: {default_speaker.name}")
+            
+            if "蓝牙耳机" in default_speaker.name or "Bluetooth" in default_speaker.name:
+                logger.info("检测到蓝牙耳机，soundcard 可能不支持")
+                return None, "蓝牙耳机可能不支持 soundcard 环回"
+            
+            loopback_mic = sc.get_microphone(id=str(default_speaker.name), include_loopback=True)
+            logger.info(f"成功获取环形回录麦克风: {loopback_mic.name}")
+            
+            logger.info(f"开始录制系统音频，时长: {duration} 秒")
+            
+            with loopback_mic.recorder(samplerate=sample_rate, channels=2) as mic:
+                audio_data = mic.record(numframes=int(sample_rate * duration))
+            
+            logger.info("音频录制完成")
+            
+            audio_data_int16 = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
+            
+            temp_dir = tempfile.gettempdir()
+            temp_file = Path(temp_dir) / f"shazam_record_{os.getpid()}.wav"
+            
+            sf.write(str(temp_file), audio_data_int16, sample_rate, subtype='PCM_16')
+            logger.info(f"音频已保存到临时文件: {temp_file}")
+            
+            return temp_file, None
+            
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"[方案1] soundcard 录制失败: {error_str}")
+            return None, error_str
+    
+    def _record_with_soundcard(self, duration, sample_rate):
+        """使用 soundcard 录制系统音频（环形回录）
+        
+        Returns:
+            临时音频文件路径，失败返回 None
+        """
+        try:
+            logger.info("[方案1] 正在使用 soundcard 查找系统音频录制设备...")
+            
+            default_speaker = sc.default_speaker()
+            logger.info(f"使用默认扬声器: {default_speaker.name}")
+            
+            if "蓝牙耳机" in default_speaker.name or "Bluetooth" in default_speaker.name:
+                print("注意: 检测到您使用的是蓝牙耳机，环形回录可能不支持")
+                print("建议切换到内置扬声器或有线耳机后重试")
+            
+            loopback_mic = sc.get_microphone(id=str(default_speaker.name), include_loopback=True)
+            logger.info(f"成功获取环形回录麦克风: {loopback_mic.name}")
+            
+            print(f"开始录制系统音频，时长: {duration} 秒...")
+            logger.info(f"开始录制系统音频，时长: {duration} 秒")
+            
+            with loopback_mic.recorder(samplerate=sample_rate, channels=2) as mic:
+                audio_data = mic.record(numframes=int(sample_rate * duration))
+            
+            logger.info("音频录制完成")
+            
+            audio_data_int16 = np.clip(audio_data * 32767, -32768, 32767).astype(np.int16)
+            
+            temp_dir = tempfile.gettempdir()
+            temp_file = Path(temp_dir) / f"shazam_record_{os.getpid()}.wav"
+            
+            sf.write(str(temp_file), audio_data_int16, sample_rate, subtype='PCM_16')
+            logger.info(f"音频已保存到临时文件: {temp_file}")
+            logger.info(f"文件大小: {temp_file.stat().st_size} bytes")
+            
+            return temp_file
+            
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"[方案1] soundcard 录制失败: {error_str}")
+            if "0x80070005" in error_str:
+                print("[方案1] 环形回录访问被拒绝 (可能是蓝牙耳机不支持)")
+            elif "0x8889000A" in error_str:
+                print("[方案1] 音频格式不支持")
+            else:
+                print(f"[方案1] 录制失败: {error_str}")
+            return None
+    
+    def _record_with_pyaudiowpatch_silent(self, duration):
+        """使用 pyaudiowpatch 录制系统音频（静默模式，不向用户输出信息）
+        
+        Returns:
+            (临时音频文件路径或 None, 错误信息或 None)
+        """
+        try:
+            logger.info("[方案2] 正在使用 pyaudiowpatch 查找 WASAPI 环回设备...")
+            
+            CHUNK = 1024
+            
+            with pyaudio_patch.PyAudio() as p:
+                try:
+                    wasapi_loopback = p.get_default_wasapi_loopback()
+                except OSError as e:
+                    logger.error(f"[方案2] 未找到 WASAPI 环回设备: {str(e)}")
+                    return None, "未找到 WASAPI 环回设备"
+                
+                SAMPLE_RATE = int(wasapi_loopback["defaultSampleRate"])
+                CHANNELS = wasapi_loopback["maxInputChannels"]
+                
+                logger.info(f"[方案2] 使用 WASAPI 环回设备: {wasapi_loopback['name']}")
+                logger.info(f"[方案2] 开始录制，采样率: {SAMPLE_RATE} Hz, 声道数: {CHANNELS}")
+                
+                with p.open(format=pyaudio_patch.paInt16,
+                            channels=CHANNELS,
+                            rate=SAMPLE_RATE,
+                            input=True,
+                            frames_per_buffer=CHUNK,
+                            input_device_index=wasapi_loopback['index']) as stream:
+                    
+                    frames = []
+                    total_frames_to_read = int(SAMPLE_RATE / CHUNK * duration)
+                    
+                    for _ in range(total_frames_to_read):
+                        data = stream.read(CHUNK)
+                        frames.append(data)
+                
+                logger.info("[方案2] 音频录制完成")
+                
+                temp_dir = tempfile.gettempdir()
+                temp_file = Path(temp_dir) / f"shazam_record_{os.getpid()}.wav"
+                
+                with wave.open(str(temp_file), 'wb') as wf:
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(p.get_sample_size(pyaudio_patch.paInt16))
+                    wf.setframerate(SAMPLE_RATE)
+                    wf.writeframes(b''.join(frames))
+                
+                logger.info(f"[方案2] 音频已保存到临时文件: {temp_file}")
+                
+                return temp_file, None
+            
+        except Exception as e:
+            logger.error(f"[方案2] pyaudiowpatch 录制失败: {str(e)}")
+            return None, str(e)
+    
+    def _record_with_pyaudiowpatch(self, duration):
+        """使用 pyaudiowpatch 录制系统音频（WASAPI 环回，支持蓝牙耳机）
+        
+        Args:
+            duration: 录制时长（秒）
+            
+        Returns:
+            临时音频文件路径，失败返回 None
+        """
+        try:
+            logger.info("[方案2] 正在使用 pyaudiowpatch 查找 WASAPI 环回设备...")
+            
+            CHUNK = 1024
+            
+            with pyaudio_patch.PyAudio() as p:
+                try:
+                    wasapi_loopback = p.get_default_wasapi_loopback()
+                except OSError as e:
+                    logger.error(f"[方案2] 未找到 WASAPI 环回设备: {str(e)}")
+                    print("[方案2] 未找到 WASAPI 环回设备，请确保在 Windows 系统上运行")
+                    return None
+                
+                SAMPLE_RATE = int(wasapi_loopback["defaultSampleRate"])
+                CHANNELS = wasapi_loopback["maxInputChannels"]
+                
+                print(f"[方案2] 录音设备: {wasapi_loopback['name']}")
+                print(f"[方案2]   -> 默认采样率: {SAMPLE_RATE} Hz")
+                print(f"[方案2]   -> 最大声道数: {CHANNELS}")
+                logger.info(f"[方案2] 使用 WASAPI 环回设备: {wasapi_loopback['name']}")
+                
+                print(f"[方案2] 开始录制系统音频，时长: {duration} 秒...")
+                logger.info(f"[方案2] 开始录制，采样率: {SAMPLE_RATE} Hz, 声道数: {CHANNELS}")
+                
+                with p.open(format=pyaudio_patch.paInt16,
+                            channels=CHANNELS,
+                            rate=SAMPLE_RATE,
+                            input=True,
+                            frames_per_buffer=CHUNK,
+                            input_device_index=wasapi_loopback['index']) as stream:
+                    
+                    frames = []
+                    total_frames_to_read = int(SAMPLE_RATE / CHUNK * duration)
+                    
+                    for _ in range(total_frames_to_read):
+                        data = stream.read(CHUNK)
+                        frames.append(data)
+                
+                logger.info("[方案2] 音频录制完成")
+                
+                temp_dir = tempfile.gettempdir()
+                temp_file = Path(temp_dir) / f"shazam_record_{os.getpid()}.wav"
+                
+                print(f"[方案2] 正在保存音频文件...")
+                
+                with wave.open(str(temp_file), 'wb') as wf:
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(p.get_sample_size(pyaudio_patch.paInt16))
+                    wf.setframerate(SAMPLE_RATE)
+                    wf.writeframes(b''.join(frames))
+                
+                logger.info(f"[方案2] 音频已保存到临时文件: {temp_file}")
+                logger.info(f"[方案2] 文件大小: {temp_file.stat().st_size} bytes")
+                
+                return temp_file
+            
+        except Exception as e:
+            logger.error(f"[方案2] pyaudiowpatch 录制失败: {str(e)}")
+            print(f"[方案2] 录制失败: {str(e)}")
+            return None
+    
+    def _record_with_pyaudio_silent(self, duration, sample_rate):
+        """使用 pyaudio 录制系统音频（静默模式，不向用户输出信息）
+        
+        Returns:
+            (临时音频文件路径或 None, 错误信息或 None)
+        """
+        try:
+            logger.info("[方案3] 正在使用 pyaudio 查找立体声混音设备...")
+            
+            p = pyaudio.PyAudio()
+            
+            stereo_mix_index = None
+            
+            for i in range(p.get_device_count()):
+                info = p.get_device_info_by_index(i)
+                name = info.get('name', '')
+                max_input_channels = int(info.get('maxInputChannels', 0))
+                
+                if max_input_channels > 0:
+                    if "立体声混音" in name or "Stereo Mix" in name or "stereo mix" in name:
+                        stereo_mix_index = i
+                        logger.info(f"找到立体声混音设备: {name}")
+            
+            if not stereo_mix_index:
+                logger.info("[方案3] 未找到立体声混音设备")
+                p.terminate()
+                return None, "未找到立体声混音设备"
+            
+            logger.info(f"[方案3] 开始录制，设备索引: {stereo_mix_index}")
+            
+            device_info = p.get_device_info_by_index(stereo_mix_index)
+            channels = min(int(device_info.get('maxInputChannels', 2)), 2)
+            
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=channels,
+                rate=sample_rate,
+                input=True,
+                input_device_index=stereo_mix_index,
+                frames_per_buffer=1024
+            )
+            
+            frames = []
+            total_frames = int(sample_rate / 1024 * duration)
+            
+            for _ in range(total_frames):
+                data = stream.read(1024, exception_on_overflow=False)
+                frames.append(data)
+            
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+            
+            logger.info("[方案3] 音频录制完成")
+            
+            temp_dir = tempfile.gettempdir()
+            temp_file = Path(temp_dir) / f"shazam_record_{os.getpid()}.wav"
+            
+            wf = wave.open(str(temp_file), 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+            wf.setframerate(sample_rate)
+            wf.writeframes(b''.join(frames))
+            wf.close()
+            
+            logger.info(f"[方案3] 音频已保存到临时文件: {temp_file}")
+            
+            return temp_file, None
+            
+        except Exception as e:
+            logger.error(f"[方案3] pyaudio 录制失败: {str(e)}")
+            try:
+                p.terminate()
+            except:
+                pass
+            return None, str(e)
+    
+    def _record_with_pyaudio(self, duration, sample_rate):
+        """使用 pyaudio 录制系统音频（立体声混音）
+        
+        Returns:
+            临时音频文件路径，失败返回 None
+        """
+        try:
+            logger.info("[方案2] 正在使用 pyaudio 查找立体声混音设备...")
+            
+            p = pyaudio.PyAudio()
+            
+            stereo_mix_index = None
+            available_mics = []
+            
+            for i in range(p.get_device_count()):
+                info = p.get_device_info_by_index(i)
+                name = info.get('name', '')
+                max_input_channels = int(info.get('maxInputChannels', 0))
+                
+                if max_input_channels > 0:
+                    available_mics.append(f"{i}: {name} (输入通道: {max_input_channels})")
+                    
+                    if "立体声混音" in name or "Stereo Mix" in name or "stereo mix" in name:
+                        stereo_mix_index = i
+                        logger.info(f"找到立体声混音设备: {name}")
+            
+            if not stereo_mix_index:
+                print("[方案2] 未找到立体声混音设备")
+                print("可用的输入设备:")
+                for mic in available_mics:
+                    print(f"  {mic}")
+                p.terminate()
+                return None
+            
+            print(f"[方案2] 使用立体声混音设备进行录制，时长: {duration} 秒...")
+            logger.info(f"[方案2] 开始录制，设备索引: {stereo_mix_index}")
+            
+            device_info = p.get_device_info_by_index(stereo_mix_index)
+            channels = min(int(device_info.get('maxInputChannels', 2)), 2)
+            
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=channels,
+                rate=sample_rate,
+                input=True,
+                input_device_index=stereo_mix_index,
+                frames_per_buffer=1024
+            )
+            
+            frames = []
+            total_frames = int(sample_rate / 1024 * duration)
+            
+            for _ in range(total_frames):
+                data = stream.read(1024, exception_on_overflow=False)
+                frames.append(data)
+            
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+            
+            logger.info("[方案2] 音频录制完成")
+            
+            temp_dir = tempfile.gettempdir()
+            temp_file = Path(temp_dir) / f"shazam_record_{os.getpid()}.wav"
+            
+            wf = wave.open(str(temp_file), 'wb')
+            wf.setnchannels(channels)
+            wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+            wf.setframerate(sample_rate)
+            wf.writeframes(b''.join(frames))
+            wf.close()
+            
+            logger.info(f"[方案2] 音频已保存到临时文件: {temp_file}")
+            logger.info(f"[方案2] 文件大小: {temp_file.stat().st_size} bytes")
+            
+            return temp_file
+            
+        except Exception as e:
+            logger.error(f"[方案2] pyaudio 录制失败: {str(e)}")
+            print(f"[方案2] 录制失败: {str(e)}")
+            try:
+                p.terminate()
+            except:
+                pass
+            return None
+    
+    async def _recognize_with_shazam(self, audio_path: Path):
+        """使用 shazamio 识别歌曲（异步函数）
+        
+        Args:
+            audio_path: 音频文件路径
+            
+        Returns:
+            识别结果字典，失败返回 None
+        """
+        if not SHAZAMIO_AVAILABLE:
+            logger.error("shazamio 未安装，无法识别歌曲")
+            print("错误: 未安装 shazamio 库")
+            print("请运行: pip install shazamio")
+            return None
+        
+        if not audio_path.exists():
+            logger.error(f"音频文件不存在: {audio_path}")
+            return None
+        
+        try:
+            shazam = Shazam()
+            logger.info(f"正在使用 Shazam 识别音频: {audio_path}")
+            
+            out = await shazam.recognize(audio_path.as_posix())
+            
+            if not out:
+                logger.warning("Shazam 未返回任何结果")
+                return None
+            
+            track = out.get("track")
+            if not track:
+                logger.warning("未识别到歌曲信息")
+                logger.debug(f"完整响应: {out}")
+                return None
+            
+            return track
+            
+        except Exception as e:
+            logger.error(f"Shazam 识别过程中发生错误: {str(e)}")
+            print(f"识别过程中发生错误: {str(e)}")
+            return None
+    
+    def _run_shazam_recognition(self):
+        """在单独线程中执行听歌识曲流程"""
+        try:
+            self.shazam_recognizing = True
+            
+            # 更新 UI
+            def update_ui_recognizing():
+                self.shazam_btn.config(state=tk.DISABLED, text="识别中...")
+                self.status_label.config(text="正在听歌识曲...")
+            self.root.after(0, update_ui_recognizing)
+            
+            print("\n" + "=" * 50)
+            print("开始听歌识曲...")
+            print("=" * 50)
+            
+            # 录制系统音频
+            print("正在录制系统音频（约 8 秒）...")
+            audio_file = self.record_system_audio(duration=8)
+            
+            if not audio_file:
+                print("音频录制失败，无法识别")
+                def update_ui_failed():
+                    self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
+                    self.status_label.config(text="音频录制失败")
+                self.root.after(0, update_ui_failed)
+                return
+            
+            print(f"音频录制完成，开始识别...")
+            
+            # 使用 asyncio 运行异步识别
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                track = loop.run_until_complete(self._recognize_with_shazam(audio_file))
+            finally:
+                try:
+                    loop.close()
+                except:
+                    pass
+            
+            # 清理临时文件
+            try:
+                if audio_file.exists():
+                    audio_file.unlink()
+                    logger.info(f"已删除临时音频文件: {audio_file}")
+            except Exception as e:
+                logger.warning(f"删除临时文件失败: {str(e)}")
+            
+            # 处理识别结果
+            if track:
+                title = track.get("title", "未知")
+                subtitle = track.get("subtitle", "未知")
+                
+                print("\n" + "=" * 50)
+                print("识别结果:")
+                print("=" * 50)
+                print(f"歌曲名: {title}")
+                print(f"艺术家: {subtitle}")
+                
+                link = None
+                cover = None
+                
+                if "images" in track:
+                    images = track["images"]
+                    if "coverart" in images:
+                        cover = images['coverart']
+                        print(f"封面: {cover}")
+                
+                if "share" in track:
+                    share = track["share"]
+                    if "href" in share:
+                        link = share['href']
+                        print(f"链接: {link}")
+                
+                print("=" * 50 + "\n")
+                
+                def update_ui_success():
+                    self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
+                    self.status_label.config(text=f"识别成功: {title} - {subtitle}")
+                self.root.after(0, update_ui_success)
+            else:
+                print("\n" + "=" * 50)
+                print("未识别到歌曲")
+                print("=" * 50 + "\n")
+                
+                def update_ui_no_match():
+                    self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
+                    self.status_label.config(text="未识别到歌曲")
+                self.root.after(0, update_ui_no_match)
+                
+        except Exception as e:
+            logger.error(f"听歌识曲过程中发生错误: {str(e)}")
+            print(f"听歌识曲过程中发生错误: {str(e)}")
+            
+            def update_ui_error():
+                self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
+                self.status_label.config(text=f"识别错误: {str(e)}")
+            self.root.after(0, update_ui_error)
+            
+        finally:
+            self.shazam_recognizing = False
+    
+    def recognize_song(self):
+        """听歌识曲主函数"""
+        # 检查依赖
+        if not SHAZAMIO_AVAILABLE:
+            self.status_label.config(text="错误: 未安装 shazamio 库")
+            print("错误: 未安装 shazamio 库")
+            print("请运行: pip install shazamio")
+            return
+        
+        if not SOUNDCARD_AVAILABLE:
+            self.status_label.config(text="错误: 未安装 soundcard 等音频库")
+            print("错误: 未安装 soundcard/soundfile/numpy 库")
+            print("请运行: pip install soundcard soundfile numpy")
+            return
+        
+        # 防止重复点击
+        if self.shazam_recognizing:
+            logger.info("已有识别任务进行中，忽略重复点击")
+            return
+        
+        # 在新线程中执行识别，避免阻塞 UI
+        thread = threading.Thread(target=self._run_shazam_recognition, daemon=True)
+        thread.start()
     
     def on_window_close(self):
         """程序关闭时的清理"""
