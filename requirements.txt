@@ -20,6 +20,7 @@ keyboard>=0.13.5
 
 # 听歌识曲
 shazamio>=0.4.0
+audioop-lts>=0.2.0
 
 # 系统音频录制
 soundcard>=0.4.3

@@ -36,6 +36,7 @@ pip install -r requirements.txt
 - `wave` - WAV文件处理
 - `keyboard` - 键盘监听（用于快捷键）
 - `shazamio` - 听歌识曲（需先安装 Rust）
+- `audioop-lts` - 音频处理（shazamio 必须依赖）
 - `soundcard` - 系统音频录制
 - `soundfile` - 音频文件处理
 - `numpy` - 音频数据处理
@@ -105,9 +106,12 @@ python screen_translator_with_qwen.py
 screen_translaor_2.0/
 ├── screen_translator_with_qwen.py  # 主程序文件
 ├── test/
-│   └── cosyvoice.py              # 语音合成测试脚本
-├── .gitignore                    # Git忽略配置
-└── README.md                     # 项目说明文档
+│   ├── cosyvoice.py              # 语音合成测试脚本
+│   ├── shazam_test.py            # Shazam 歌曲识别测试脚本
+│   └── OPPO Enco Free4.py        # 蓝牙耳机系统音频录制测试脚本
+├── requirements.txt               # Python 依赖列表
+├── .gitignore                     # Git忽略配置
+└── README.md                      # 项目说明文档
 ```
 
 ## 核心功能实现
@@ -124,12 +128,21 @@ screen_translaor_2.0/
 ### 4. 变速播放
 通过音频重采样算法实现0.75倍速播放功能。
 
+### 5. 听歌识曲
+使用三种录制方案自动选择：
+- `soundcard`：适合内置扬声器、有线耳机
+- `pyaudiowpatch`：支持蓝牙耳机（WASAPI 环回）
+- `pyaudio`：立体声混音设备
+配合 `shazamio` 识别正在播放的音乐。
+
 ## 注意事项
 
 1. 首次使用需要配置API Key
 2. 网络环境需要能够访问阿里云API
 3. 语音合成功能会生成临时文件 `cosyvoice.wav`，程序关闭时自动清理
 4. 建议在安静环境下使用语音播放功能
+5. 使用听歌识曲功能前请确保已安装 Rust（用于编译 shazamio 依赖）
+6. 蓝牙耳机用户推荐安装 `pyaudiowpatch` 以获得最佳体验
 
 ## 更新日志
 
