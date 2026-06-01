@@ -35,6 +35,11 @@ pip install -r requirements.txt
 - `pyaudio` - 音频播放
 - `wave` - WAV文件处理
 - `keyboard` - 键盘监听（用于快捷键）
+- `shazamio` - 听歌识曲（需先安装 Rust）
+- `soundcard` - 系统音频录制
+- `soundfile` - 音频文件处理
+- `numpy` - 音频数据处理
+- `pyaudiowpatch` - Windows WASAPI 环回（支持蓝牙耳机）
 
 ### API Key 配置
 
@@ -81,6 +86,12 @@ python screen_translator_with_qwen.py
 5. **关闭窗口**
    - 点击主界面的「关闭」按钮关闭所有窗口
    - 或直接关闭主窗口
+
+6. **听歌识曲**
+   - 点击主界面的「听歌识曲」按钮
+   - 程序会自动录制 8 秒的系统音频并识别
+   - 识别结果（歌曲名、艺术家、链接）会显示在控制台中
+   - 支持蓝牙耳机（通过 pyaudiowpatch 的 WASAPI 环回）
 
 ### 快捷键
 
