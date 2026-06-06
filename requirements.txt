@@ -28,4 +28,4 @@ soundfile>=0.12.1
 numpy>=1.24.0
 
 # Windows WASAPI 环形回录（支持蓝牙耳机）
-pyaudiowpatch>=0.3.0
+pyaudiowpatch>=0.2.12.8
