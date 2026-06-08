@@ -1,5 +1,7 @@
 # 日志文件
 debug.log
+boot.log
+*.log
 
 # API密钥文件
 key.txt
