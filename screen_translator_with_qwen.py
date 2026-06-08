@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import tkinter as tk
+from tkinter import scrolledtext
 import pyautogui
 from PIL import Image, ImageEnhance, ImageOps
 import base64
@@ -12,16 +13,99 @@ import wave
 import pyaudio
 import asyncio
 import tempfile
+import queue
 from pathlib import Path
 from openai import OpenAI
 from dashscope.audio.http_tts.http_speech_synthesizer import HttpSpeechSynthesizer
 
-# 配置日志
+class LogWindowHandler(logging.Handler):
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+        self.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.log_queue.put(msg)
+        except Exception:
+            pass
+
+class LogWindow:
+    def __init__(self, root, log_queue):
+        self.root = root
+        self.log_queue = log_queue
+        self.window = None
+        self.text_widget = None
+
+    def show(self):
+        if self.window and self.window.winfo_exists():
+            self.window.deiconify()
+            self.window.lift()
+            return
+
+        self.window = tk.Toplevel(self.root)
+        self.window.title("日志窗口")
+        self.window.geometry("700x500")
+
+        main_frame = tk.Frame(self.window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.text_widget = scrolledtext.ScrolledText(
+            main_frame,
+            wrap=tk.WORD,
+            font=("Consolas", 10),
+            bg="#1e1e1e",
+            fg="#d4d4d4",
+            insertbackground="#d4d4d4",
+            state=tk.DISABLED
+        )
+        self.text_widget.pack(fill=tk.BOTH, expand=True)
+
+        button_frame = tk.Frame(self.window)
+        button_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+
+        clear_btn = tk.Button(button_frame, text="清空日志", command=self.clear_log, font=("Arial", 10))
+        clear_btn.pack(side=tk.LEFT, padx=5)
+
+        copy_btn = tk.Button(button_frame, text="复制全部", command=self.copy_all, font=("Arial", 10))
+        copy_btn.pack(side=tk.LEFT, padx=5)
+
+        self.poll_queue()
+
+    def poll_queue(self):
+        if self.window and self.window.winfo_exists() and self.text_widget:
+            try:
+                while True:
+                    msg = self.log_queue.get_nowait()
+                    self.text_widget.configure(state=tk.NORMAL)
+                    self.text_widget.insert(tk.END, msg + '\n')
+                    self.text_widget.see(tk.END)
+                    self.text_widget.configure(state=tk.DISABLED)
+            except queue.Empty:
+                pass
+            self.window.after(100, self.poll_queue)
+
+    def clear_log(self):
+        if self.text_widget:
+            self.text_widget.configure(state=tk.NORMAL)
+            self.text_widget.delete(1.0, tk.END)
+            self.text_widget.configure(state=tk.DISABLED)
+
+    def copy_all(self):
+        if self.text_widget:
+            content = self.text_widget.get(1.0, tk.END)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(content)
+
+log_queue = queue.Queue()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()
+        logging.StreamHandler(),
+        LogWindowHandler(log_queue)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -229,10 +313,22 @@ class ScreenTranslatorApp:
                                    bg='orange', fg='black', font=('Arial', 12), state=tk.DISABLED)
         self.abort_btn.pack(pady=5)
         
+        # 关闭和日志按钮放在同一行
+        self.close_log_frame = tk.Frame(root)
+        self.close_log_frame.pack(pady=5)
+        
         # 关闭按钮
-        self.close_btn = tk.Button(root, text="关闭", command=self.close_border, 
+        self.close_btn = tk.Button(self.close_log_frame, text="关闭", command=self.close_border, 
                                    bg='red', fg='white', font=('Arial', 12), state=tk.DISABLED)
-        self.close_btn.pack(pady=5)
+        self.close_btn.pack(side=tk.LEFT, padx=3)
+        
+        # 日志按钮
+        self.log_btn = tk.Button(self.close_log_frame, text="日志", command=self.show_log_window, 
+                                   bg='blue', fg='white', font=('Arial', 12))
+        self.log_btn.pack(side=tk.LEFT, padx=3)
+        
+        # 初始化日志窗口
+        self.log_window = LogWindow(root, log_queue)
         
         # 听歌识曲按钮
         self.shazam_btn = tk.Button(root, text="听歌识曲", command=self.recognize_song, 
@@ -1498,7 +1594,7 @@ class ScreenTranslatorApp:
         if SOUNDCARD_AVAILABLE:
             result, err = self._record_with_soundcard_silent(duration, sample_rate)
             if result:
-                print("正在录制系统音频（约 8 秒）...")
+                logger.info("正在录制系统音频（约 8 秒）...")
                 return result
             if err:
                 errors.append(f"方案1 (soundcard): {err}")
@@ -1507,7 +1603,7 @@ class ScreenTranslatorApp:
         if PYAUDPATCH_AVAILABLE:
             result, err = self._record_with_pyaudiowpatch_silent(duration)
             if result:
-                print("正在录制系统音频（约 8 秒）...")
+                logger.info("正在录制系统音频（约 8 秒）...")
                 return result
             if err:
                 errors.append(f"方案2 (pyaudiowpatch): {err}")
@@ -1515,33 +1611,33 @@ class ScreenTranslatorApp:
         # 方案 3: 使用 pyaudio 录制立体声混音
         result, err = self._record_with_pyaudio_silent(duration, sample_rate)
         if result:
-            print("正在录制系统音频（约 8 秒）...")
+            logger.info("正在录制系统音频（约 8 秒）...")
             return result
         if err:
             errors.append(f"方案3 (pyaudio): {err}")
         
         # 所有方案都失败，提供帮助信息
-        print("\n" + "=" * 60)
-        print("无法录制系统音频")
-        print("=" * 60)
-        print("可能的原因和解决方案:")
-        print("")
-        print("方案一: 安装 pyaudiowpatch（推荐，支持蓝牙耳机）")
-        print("  pip install pyaudiowpatch")
-        print("  这个库专门支持 Windows WASAPI 环回，包括蓝牙耳机")
-        print("")
-        print("方案二: 确保音频从内置扬声器或有线耳机播放")
-        print("  - 部分蓝牙耳机可能不支持系统音频环形回录")
-        print("  - 请切换到笔记本内置扬声器或 3.5mm 有线耳机")
-        print("")
-        print("方案三: 启用 Windows 立体声混音")
-        print("  1. 右键点击任务栏音量图标 → '声音设置'")
-        print("  2. 点击右侧 '声音控制面板'")
-        print("  3. 切换到 '录制' 选项卡")
-        print("  4. 右键空白处 → 勾选 '显示禁用的设备'")
-        print("  5. 找到 '立体声混音' → 右键 → 启用")
-        print("  6. 重启程序后重试")
-        print("=" * 60 + "\n")
+        logger.error("\n" + "=" * 60)
+        logger.error("无法录制系统音频")
+        logger.error("=" * 60)
+        logger.error("可能的原因和解决方案:")
+        logger.error("")
+        logger.error("方案一: 安装 pyaudiowpatch（推荐，支持蓝牙耳机）")
+        logger.error("  pip install pyaudiowpatch")
+        logger.error("  这个库专门支持 Windows WASAPI 环回，包括蓝牙耳机")
+        logger.error("")
+        logger.error("方案二: 确保音频从内置扬声器或有线耳机播放")
+        logger.error("  - 部分蓝牙耳机可能不支持系统音频环形回录")
+        logger.error("  - 请切换到笔记本内置扬声器或 3.5mm 有线耳机")
+        logger.error("")
+        logger.error("方案三: 启用 Windows 立体声混音")
+        logger.error("  1. 右键点击任务栏音量图标 → '声音设置'")
+        logger.error("  2. 点击右侧 '声音控制面板'")
+        logger.error("  3. 切换到 '录制' 选项卡")
+        logger.error("  4. 右键空白处 → 勾选 '显示禁用的设备'")
+        logger.error("  5. 找到 '立体声混音' → 右键 → 启用")
+        logger.error("  6. 重启程序后重试")
+        logger.error("=" * 60 + "\n")
         
         return None
     
@@ -1936,8 +2032,6 @@ class ScreenTranslatorApp:
         """
         if not SHAZAMIO_AVAILABLE:
             logger.error("shazamio 未安装，无法识别歌曲")
-            print("错误: 未安装 shazamio 库")
-            print("请运行: pip install shazamio")
             return None
         
         if not audio_path.exists():
@@ -1964,7 +2058,6 @@ class ScreenTranslatorApp:
             
         except Exception as e:
             logger.error(f"Shazam 识别过程中发生错误: {str(e)}")
-            print(f"识别过程中发生错误: {str(e)}")
             return None
     
     def _run_shazam_recognition(self):
@@ -1978,23 +2071,23 @@ class ScreenTranslatorApp:
                 self.status_label.config(text="正在听歌识曲...")
             self.root.after(0, update_ui_recognizing)
             
-            print("\n" + "=" * 50)
-            print("开始听歌识曲...")
-            print("=" * 50)
+            logger.info("\n" + "=" * 50)
+            logger.info("开始听歌识曲...")
+            logger.info("=" * 50)
             
             # 录制系统音频
-            print("正在录制系统音频（约 8 秒）...")
+            logger.info("正在录制系统音频（约 8 秒）...")
             audio_file = self.record_system_audio(duration=8)
             
             if not audio_file:
-                print("音频录制失败，无法识别")
+                logger.error("音频录制失败，无法识别")
                 def update_ui_failed():
                     self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
                     self.status_label.config(text="音频录制失败")
                 self.root.after(0, update_ui_failed)
                 return
             
-            print(f"音频录制完成，开始识别...")
+            logger.info("音频录制完成，开始识别...")
             
             # 使用 asyncio 运行异步识别
             try:
@@ -2020,11 +2113,11 @@ class ScreenTranslatorApp:
                 title = track.get("title", "未知")
                 subtitle = track.get("subtitle", "未知")
                 
-                print("\n" + "=" * 50)
-                print("识别结果:")
-                print("=" * 50)
-                print(f"歌曲名: {title}")
-                print(f"艺术家: {subtitle}")
+                logger.info("\n" + "=" * 50)
+                logger.info("识别结果:")
+                logger.info("=" * 50)
+                logger.info(f"歌曲名: {title}")
+                logger.info(f"艺术家: {subtitle}")
                 
                 link = None
                 cover = None
@@ -2033,24 +2126,24 @@ class ScreenTranslatorApp:
                     images = track["images"]
                     if "coverart" in images:
                         cover = images['coverart']
-                        print(f"封面: {cover}")
+                        logger.info(f"封面: {cover}")
                 
                 if "share" in track:
                     share = track["share"]
                     if "href" in share:
                         link = share['href']
-                        print(f"链接: {link}")
+                        logger.info(f"链接: {link}")
                 
-                print("=" * 50 + "\n")
+                logger.info("=" * 50 + "\n")
                 
                 def update_ui_success():
                     self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
                     self.status_label.config(text=f"识别成功: {title} - {subtitle}")
                 self.root.after(0, update_ui_success)
             else:
-                print("\n" + "=" * 50)
-                print("未识别到歌曲")
-                print("=" * 50 + "\n")
+                logger.info("\n" + "=" * 50)
+                logger.warning("未识别到歌曲")
+                logger.info("=" * 50 + "\n")
                 
                 def update_ui_no_match():
                     self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
@@ -2059,7 +2152,6 @@ class ScreenTranslatorApp:
                 
         except Exception as e:
             logger.error(f"听歌识曲过程中发生错误: {str(e)}")
-            print(f"听歌识曲过程中发生错误: {str(e)}")
             
             def update_ui_error():
                 self.shazam_btn.config(state=tk.NORMAL, text="听歌识曲")
@@ -2074,14 +2166,14 @@ class ScreenTranslatorApp:
         # 检查依赖
         if not SHAZAMIO_AVAILABLE:
             self.status_label.config(text="错误: 未安装 shazamio 库")
-            print("错误: 未安装 shazamio 库")
-            print("请运行: pip install shazamio")
+            logger.error("错误: 未安装 shazamio 库")
+            logger.error("请运行: pip install shazamio")
             return
         
         if not SOUNDCARD_AVAILABLE:
             self.status_label.config(text="错误: 未安装 soundcard 等音频库")
-            print("错误: 未安装 soundcard/soundfile/numpy 库")
-            print("请运行: pip install soundcard soundfile numpy")
+            logger.error("错误: 未安装 soundcard/soundfile/numpy 库")
+            logger.error("请运行: pip install soundcard soundfile numpy")
             return
         
         # 防止重复点击
@@ -2092,6 +2184,10 @@ class ScreenTranslatorApp:
         # 在新线程中执行识别，避免阻塞 UI
         thread = threading.Thread(target=self._run_shazam_recognition, daemon=True)
         thread.start()
+    
+    def show_log_window(self):
+        """显示日志窗口"""
+        self.log_window.show()
     
     def on_window_close(self):
         """程序关闭时的清理"""
