@@ -3,7 +3,7 @@ schema_version: 1
 locale: zh-CN
 branch: master
 nodes_managed: true
-exported_at: "2026-07-14T14:48:21Z"
+exported_at: "2026-07-14T15:29:52Z"
 modules:
     "":
         dir_name: 屏幕翻译工具 (Screen Translator) 主程序与启动器
