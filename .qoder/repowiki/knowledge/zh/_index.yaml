@@ -1,0 +1,22 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: master
+nodes_managed: true
+exported_at: "2026-07-14T14:48:21Z"
+modules:
+    "":
+        dir_name: 屏幕翻译工具 (Screen Translator) 主程序与启动器
+        title: 屏幕翻译工具 (Screen Translator) 主程序与启动器
+        scope:
+            - .gitignore
+            - requirements.txt
+            - boot.py
+            - screen_translator_with_qwen.py
+            - test/
+            - README.md
+            - TODO.txt
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

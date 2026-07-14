@@ -98,6 +98,207 @@ class LogWindow:
             self.root.clipboard_clear()
             self.root.clipboard_append(content)
 
+class AIChatWindow:
+    """AI对话窗口"""
+    def __init__(self, root, app):
+        self.root = root
+        self.app = app
+        self.window = None
+        self.chat_display = None
+        self.input_text = None
+
+    def show(self):
+        if self.window and self.window.winfo_exists():
+            self.window.deiconify()
+            self.window.lift()
+            return
+
+        self.window = tk.Toplevel(self.root)
+        self.window.title("AI对话")
+        self.window.geometry("600x500")
+        self.window.minsize(400, 400)
+        
+        # 居中显示
+        self.window.update_idletasks()
+        screen_w = self.window.winfo_screenwidth()
+        screen_h = self.window.winfo_screenheight()
+        x = (screen_w - 600) // 2
+        y = (screen_h - 500) // 2
+        self.window.geometry(f"600x500+{x}+{y}")
+
+        # 主框架
+        main_frame = tk.Frame(self.window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 输入区域（放在上面）
+        input_frame = tk.Frame(main_frame)
+        input_frame.pack(fill=tk.X, side=tk.TOP, pady=(0, 5))
+
+        # 左侧按钮区域（垂直排列）
+        btn_frame = tk.Frame(input_frame)
+        btn_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+
+        # 发送按钮（放上面）
+        self.send_btn = tk.Button(
+            btn_frame, text="发送",
+            command=self.send_message,
+            font=("Arial", 10, "bold"),
+            bg="#0078D4",
+            fg="white",
+            width=8
+        )
+        self.send_btn.pack(side=tk.TOP, pady=(0, 3))
+
+        # 捕获原文按钮（放下面）
+        self.capture_btn = tk.Button(
+            btn_frame, text="捕获原文",
+            command=self.capture_original_text,
+            font=("Arial", 10),
+            bg="#2E7D32",
+            fg="white"
+        )
+        self.capture_btn.pack(side=tk.TOP)
+
+        # 输入文本框
+        self.input_text = tk.Text(input_frame, height=3, font=("Microsoft YaHei", 10))
+        self.input_text.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+        # 绑定快捷键 Ctrl+Enter 发送
+        self.input_text.bind("<Control-Return>", lambda e: self.send_message())
+
+        # 让输入框获取焦点
+        self.input_text.focus_set()
+
+        # 聊天历史显示区域（放在下面，占据剩余空间）
+        chat_frame = tk.Frame(main_frame)
+        chat_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.chat_display = scrolledtext.ScrolledText(
+            chat_frame,
+            wrap=tk.WORD,
+            font=("Microsoft YaHei", 10),
+            bg="#1e1e1e",
+            fg="#d4d4d4",
+            insertbackground="#d4d4d4",
+            state=tk.DISABLED
+        )
+        self.chat_display.pack(fill=tk.BOTH, expand=True)
+
+        # 配置聊天显示区域的标签样式
+        self.chat_display.tag_configure("user", foreground="#4FC3F7", font=("Microsoft YaHei", 10, "bold"))
+        self.chat_display.tag_configure("ai", foreground="#81C784", font=("Microsoft YaHei", 10, "bold"))
+        self.chat_display.tag_configure("system", foreground="#FFB74D", font=("Microsoft YaHei", 10, "bold"))
+        self.chat_display.tag_configure("user_text", foreground="#E0E0E0", font=("Microsoft YaHei", 10))
+        self.chat_display.tag_configure("ai_text", foreground="#E0E0E0", font=("Microsoft YaHei", 10))
+        self.chat_display.tag_configure("system_text", foreground="#FFB74D", font=("Microsoft YaHei", 10))
+
+        # 显示欢迎信息
+        self._append_message("system", "欢迎使用AI对话！\n在输入框粘贴或输入问题（可先点击「捕获原文」），然后按 Ctrl+Enter 或点击「发送」向AI提问。")
+
+    def capture_original_text(self):
+        """从ocr_cache中获取原文内容到输入框"""
+        texts = []
+        for key, text in self.app.ocr_cache.items():
+            if text and text.strip():
+                texts.append(text.strip())
+
+        if not texts:
+            self._append_message("system", "暂无原文缓存内容，请先进行截图识别。")
+            return
+
+        # 合并所有原文内容
+        combined_text = "\n\n".join(texts)
+
+        # 清空并填入输入框
+        self.input_text.delete("1.0", tk.END)
+        self.input_text.insert(tk.END, combined_text)
+
+        ellipsis = "..." if len(combined_text) > 200 else ""
+        self._append_message("system", f"已捕获原文内容 ({len(texts)} 条)\n\n{combined_text[:200]}{ellipsis}")
+
+        # 将焦点移回输入框末尾
+        self.input_text.focus_set()
+        self.input_text.mark_set(tk.INSERT, tk.END)
+
+    def send_message(self):
+        """发送用户消息到AI"""
+        user_msg = self.input_text.get("1.0", tk.END).strip()
+        if not user_msg:
+            return
+
+        # 清空输入框
+        self.input_text.delete("1.0", tk.END)
+
+        # 显示用户消息
+        self._append_message("user", user_msg)
+
+        # 禁用发送按钮和捕获按钮，防止重复发送
+        self.send_btn.config(state=tk.DISABLED, text="发送中...")
+        self.capture_btn.config(state=tk.DISABLED)
+
+        # 在新线程中调用AI
+        threading.Thread(target=self._do_chat, args=(user_msg,), daemon=True).start()
+
+    def _append_message(self, role, message):
+        """在聊天显示区域添加消息"""
+        self.chat_display.configure(state=tk.NORMAL)
+
+        if role == "user":
+            self.chat_display.insert(tk.END, "[你]\n", "user")
+            self.chat_display.insert(tk.END, message + "\n\n", "user_text")
+        elif role == "ai":
+            self.chat_display.insert(tk.END, "[AI]\n", "ai")
+            self.chat_display.insert(tk.END, message + "\n\n", "ai_text")
+        else:
+            self.chat_display.insert(tk.END, "[系统]\n", "system")
+            self.chat_display.insert(tk.END, message + "\n\n", "system_text")
+
+        self.chat_display.see(tk.END)
+        self.chat_display.configure(state=tk.DISABLED)
+
+    def _do_chat(self, user_msg):
+        """在线程中调用千问API进行对话"""
+        global qwen_client
+        if qwen_client is None:
+            self.root.after(0, lambda: self._on_chat_error("AI客户端未初始化，请检查key.txt文件中的API密钥"))
+            return
+
+        try:
+            response = qwen_client.chat.completions.create(
+                model="qwen3.6-flash",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": user_msg
+                    }
+                ]
+            )
+
+            result = response.choices[0].message.content
+            self.root.after(0, lambda: self._on_chat_result(result))
+
+        except Exception as e:
+            error_str = str(e)
+            if "401" in error_str or "Unauthorized" in error_str:
+                self.root.after(0, lambda: self._on_chat_error("API密钥无效或已过期，请检查key.txt文件"))
+            elif "429" in error_str or "Too Many Requests" in error_str:
+                self.root.after(0, lambda: self._on_chat_error("请求过于频繁，请稍后再试"))
+            else:
+                self.root.after(0, lambda: self._on_chat_error(f"请求失败: {error_str}"))
+
+    def _on_chat_result(self, result):
+        """处理AI返回结果"""
+        self._append_message("ai", result)
+        self.send_btn.config(state=tk.NORMAL, text="发送")
+        self.capture_btn.config(state=tk.NORMAL)
+
+    def _on_chat_error(self, error_msg):
+        """处理错误"""
+        self._append_message("system", f"错误: {error_msg}")
+        self.send_btn.config(state=tk.NORMAL, text="发送")
+        self.capture_btn.config(state=tk.NORMAL)
+
+
 log_queue = queue.Queue()
 
 logging.basicConfig(
@@ -334,6 +535,14 @@ class ScreenTranslatorApp:
         self.shazam_btn = tk.Button(root, text="听歌识曲", command=self.recognize_song, 
                                    bg='purple', fg='white', font=('Arial', 12))
         self.shazam_btn.pack(pady=5)
+        
+        # AI对话按钮
+        self.ai_chat_btn = tk.Button(root, text="AI对话", command=self.show_ai_chat_window, 
+                                   bg='#1565C0', fg='white', font=('Arial', 12))
+        self.ai_chat_btn.pack(pady=5)
+        
+        # 初始化AI对话窗口
+        self.ai_chat_window = None
         
         # 快捷键设置区域
         self.shortcut_frame = tk.Frame(root)
@@ -2185,6 +2394,12 @@ class ScreenTranslatorApp:
         thread = threading.Thread(target=self._run_shazam_recognition, daemon=True)
         thread.start()
     
+    def show_ai_chat_window(self):
+        """显示AI对话窗口"""
+        if self.ai_chat_window is None:
+            self.ai_chat_window = AIChatWindow(self.root, self)
+        self.ai_chat_window.show()
+
     def show_log_window(self):
         """显示日志窗口"""
         self.log_window.show()
